@@ -1,5 +1,6 @@
 import Button from '../components/Button.jsx';
 import ConfirmButton from '../components/ConfirmButton.jsx';
+import ApiStatus from '../components/ApiStatus.jsx';
 import { ArrowRightIcon, BoltIcon, ChartIcon, ClockIcon, ScaleIcon, TrashIcon, ChevronRightIcon } from '../components/Icons.jsx';
 
 const FEATURES = [
@@ -59,6 +60,9 @@ export default function HomePage({ history, onStart, onOpenDebate, onDelete, onC
             Start a Debate
             <ArrowRightIcon className="h-5 w-5" />
           </Button>
+        </div>
+        <div className="mt-4">
+          <ApiStatus />
         </div>
       </section>
 

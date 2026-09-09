@@ -1,7 +1,12 @@
-import OpenAI from 'openai';
 import * as offline from './offlineEngine.js';
+import {
+  cleanApiKey,
+  isKeyConfigured,
+  getModelName,
+  getBaseUrl,
+  isOfflineFallbackEnabled,
+} from './publicStatus.js';
 
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const VALID_POSITIONS = ['for', 'against'];
 const VALID_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
 
@@ -15,17 +20,32 @@ export class ApiError extends Error {
 
 /** True when a real API key is configured. */
 export function isAiConfigured() {
-  const key = (process.env.OPENAI_API_KEY || '').trim();
-  return Boolean(key) && key !== 'your_api_key_here' && key !== 'sk-xxx';
+  return isKeyConfigured();
 }
 
-function getClient() {
+async function getClient() {
   if (!isAiConfigured()) {
     throw new ApiError(503, 'AI service is not configured.');
   }
+  // The `openai` package is loaded lazily (not imported at the top of this
+  // file) on purpose: if the package ever fails to resolve inside a deployed
+  // serverless bundle, the import error becomes a catchable 502 here — so the
+  // offline fallback can still answer — instead of crashing every API route
+  // at module load.
+  let OpenAI;
+  try {
+    ({ default: OpenAI } = await import('openai'));
+  } catch (error) {
+    console.error('[ai] failed to load the OpenAI client:', error?.message || error);
+    throw new ApiError(
+      502,
+      'Could not reach the AI service. Please check your connection and try again.'
+    );
+  }
+  const baseURL = getBaseUrl();
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL || undefined,
+    apiKey: cleanApiKey(),
+    baseURL: baseURL || undefined,
     // Keep the total worst-case time (timeout + 1 retry + backoff, ~45s) below
     // the 60s Vercel serverless function limit, so a slow request still returns
     // a friendly error (or offline fallback) instead of a platform 504.
@@ -193,9 +213,9 @@ function extractJson(text) {
 }
 
 async function complete(messages, { json = false } = {}) {
-  const client = getClient();
+  const client = await getClient();
   const request = {
-    model: MODEL,
+    model: getModelName(),
     messages,
     temperature: 0.7,
     max_tokens: 900,
@@ -230,6 +250,23 @@ async function complete(messages, { json = false } = {}) {
       throw new ApiError(
         429,
         'You have reached the AI rate limit. Please wait a moment and then try again.'
+      );
+    }
+    // Unknown model (e.g. a typo in OPENAI_MODEL, or a model the key cannot
+    // access). Use 502 — never 400 — so the offline fallback can still answer.
+    if (error?.status === 404) {
+      throw new ApiError(
+        502,
+        'The configured AI model was not found. Check the OPENAI_MODEL setting and try again.'
+      );
+    }
+    // The provider rejected the request (e.g. a misconfigured proxy base URL).
+    // Again 502, so a client validation error (400) stays distinct from a
+    // provider failure and the offline fallback still applies.
+    if (error?.status === 400) {
+      throw new ApiError(
+        502,
+        'The AI service rejected the request. Please try again in a moment.'
       );
     }
     // No HTTP status means a transport/connectivity problem (DNS, TLS, reset,
@@ -464,13 +501,8 @@ Return ONLY valid JSON with exactly these keys:
 
 /* --------------------- online / offline orchestration --------------------- */
 
-/**
- * Offline (local demo) replies are used only when the real AI is not
- * configured or cannot be reached, so the app still works end-to-end without
- * network access. Set ALLOW_OFFLINE_FALLBACK=false to enforce OpenAI-only.
- */
 function offlineAllowed() {
-  return (process.env.ALLOW_OFFLINE_FALLBACK || '').trim().toLowerCase() !== 'false';
+  return isOfflineFallbackEnabled();
 }
 
 /** Return true when we should transparently fall back to local replies. */

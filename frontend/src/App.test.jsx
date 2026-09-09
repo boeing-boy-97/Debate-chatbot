@@ -11,11 +11,13 @@ const TOPIC = 'Should AI replace human teachers?';
 function mockFetch() {
   const calls = [];
   globalThis.fetch = vi.fn(async (url, options) => {
-    const body = JSON.parse(options.body || '{}');
+    const body = JSON.parse(options?.body || '{}');
     calls.push(url);
     let payload;
-    if (url.endsWith('/start')) {
-      payload = { reply: 'Welcome to the debate. I will argue the opposite side.' };
+    if (url.endsWith('/api/health')) {
+      payload = { status: 'ok', configured: true, model: 'gpt-4o-mini', offlineFallback: 'on' };
+    } else if (url.endsWith('/start')) {
+      payload = { mode: 'online', reply: 'Welcome to the debate. I will argue the opposite side.' };
     } else if (url.endsWith('/message')) {
       payload = {
         reply: {
@@ -62,6 +64,7 @@ function mockFetch() {
       ok: true,
       status: 200,
       json: async () => payload,
+      text: async () => JSON.stringify(payload),
     };
   });
   return calls;
@@ -163,5 +166,83 @@ describe('Debate AI full flow', () => {
 
     await user.click(screen.getByRole('button', { name: /Send/i }));
     expect(screen.getByText('Please enter an argument first.')).toBeTruthy();
+  });
+
+  it('shows the service status on the home page', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('AI connected')).toBeTruthy());
+  });
+});
+
+describe('Debate AI API failures', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  async function goToDebate(user) {
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /Start a Debate/i }));
+    await user.type(screen.getByLabelText(/Debate Topic/i), TOPIC);
+    await user.click(screen.getByRole('button', { name: /^FOR/i }));
+    await user.click(screen.getByRole('button', { name: /Start Debate/i }));
+  }
+
+  it('shows a helpful card when the API returns HTML instead of JSON', async () => {
+    // Simulates a misconfigured deployment (e.g. wrong Vercel Root Directory):
+    // /api/* serves the index.html page instead of JSON.
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith('/api/health')) {
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <');
+        },
+        text: async () => '<!doctype html><html></html>',
+      };
+    });
+    const user = userEvent.setup();
+    await goToDebate(user);
+
+    await waitFor(() =>
+      expect(screen.getByText("Can't reach the debate API")).toBeTruthy()
+    );
+    expect(screen.getAllByText(/Root Directory/).length).toBeGreaterThan(0);
+    // The failed start can be retried.
+    expect(screen.getByRole('button', { name: /Retry/i })).toBeTruthy();
+  });
+
+  it('shows the setup card with a redeploy hint when the API key is missing', async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith('/api/health')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            status: 'ok',
+            configured: false,
+            model: 'gpt-4o-mini',
+            offlineFallback: 'off',
+          }),
+        };
+      }
+      const payload = { error: 'AI service is not configured.' };
+      return {
+        ok: false,
+        status: 503,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      };
+    });
+    const user = userEvent.setup();
+    await goToDebate(user);
+
+    await waitFor(() =>
+      expect(screen.getByText('AI service is not set up')).toBeTruthy()
+    );
+    expect(screen.getByText(/you must redeploy/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Retry/i })).toBeTruthy();
   });
 });

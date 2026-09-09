@@ -61,7 +61,18 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   const [saved, setSaved] = useState(Boolean(debate.initialEvaluation));
   const [inputError, setInputError] = useState('');
   const [apiError, setApiError] = useState('');
+  const [apiErrorCode, setApiErrorCode] = useState('');
   const [offlineMode, setOfflineMode] = useState(false);
+
+  function showError(error) {
+    setApiError(error?.message || 'Something went wrong. Please try again.');
+    setApiErrorCode(error?.code || '');
+  }
+
+  function clearError() {
+    setApiError('');
+    setApiErrorCode('');
+  }
 
   const started = useRef(false);
   const scrollRef = useRef(null);
@@ -87,14 +98,14 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
 
   async function runStart() {
     setBusy(true);
-    setApiError('');
+    clearError();
     try {
       const res = await api.startDebate({ topic, userPosition, difficulty });
       setMessages([{ type: 'ai', text: res.reply, id: uid('message') }]);
       if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
-      setApiError(error.message);
+      showError(error);
       setPending({ type: 'start' });
       setMessages([]);
     } finally {
@@ -109,7 +120,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       return;
     }
     setInputError('');
-    setApiError('');
+    clearError();
     const next = [...messages, { type: 'user', text: value, id: uid('message') }];
     setMessages(next);
     setInput('');
@@ -125,7 +136,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       setMessages([...next, { type: 'ai', sections: res.reply, id: uid('message') }]);
       if (res.mode === 'offline') setOfflineMode(true);
     } catch (error) {
-      setApiError(error.message);
+      showError(error);
       setPending({ type: 'send', argument: value });
     } finally {
       setBusy(false);
@@ -133,7 +144,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   }
 
   async function retrySend() {
-    setApiError('');
+    clearError();
     setBusy(true);
     try {
       const res = await api.sendMessage({
@@ -147,14 +158,14 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
-      setApiError(error.message);
+      showError(error);
     } finally {
       setBusy(false);
     }
   }
 
   function doAnalyze(userMessage, aiMessage) {
-    setApiError('');
+    clearError();
     setAnalyzingId(aiMessage.id);
     return api
       .analyzeArgument({
@@ -172,7 +183,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         setPending(null);
       })
       .catch((error) => {
-        setApiError(error.message);
+        showError(error);
         setPending({ type: 'analyze', userMessage, aiMessage });
       })
       .finally(() => setAnalyzingId(null));
@@ -181,10 +192,10 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   /** Get a score for the debate; pass final=true to finish the debate. */
   async function runEvaluate(final = false) {
     if (!hasUserArguments) {
-      setApiError('Send at least one argument before scoring the debate.');
+      showError({ message: 'Send at least one argument before scoring the debate.' });
       return;
     }
-    setApiError('');
+    clearError();
     setEvaluating(true);
     try {
       const res = await api.evaluateDebate({
@@ -200,7 +211,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       setPending(null);
       if (final) setEnded(true);
     } catch (error) {
-      setApiError(error.message);
+      showError(error);
       setPending({ type: 'evaluate', final });
     } finally {
       setEvaluating(false);
@@ -212,7 +223,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     setEvaluation(null);
     setEnded(false);
     setSaved(false);
-    setApiError('');
+    clearError();
     setPending(null);
     runStart();
   }
@@ -246,6 +257,9 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
 
   const busyOrEvaluating = busy || evaluating;
   const controlsDisabled = busyOrEvaluating || ended;
+  const isUnconfigured =
+    apiErrorCode === 'unconfigured' || apiError === 'AI service is not configured.';
+  const isApiDown = ['api-missing', 'bad-response', 'network'].includes(apiErrorCode);
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-3xl flex-col px-3 py-3 sm:px-4">
@@ -302,48 +316,102 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
           </div>
         )}
 
-        {apiError &&
-          (apiError === 'AI service is not configured.' ? (
-            <div
-              role="alert"
-              className="mx-auto mt-8 w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-amber-200"
-            >
-              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-600">
-                <AlertIcon className="h-6 w-6" />
-              </span>
-              <h2 className="mt-3 text-lg font-bold text-slate-900">AI service is not set up</h2>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                This app needs an OpenAI API key to debate. Set the{' '}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">
-                  OPENAI_API_KEY
-                </code>{' '}
-                environment variable on your host (locally, that's{' '}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend/server/.env</code>)
-                and reload the page.
-              </p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button variant="secondary" size="sm" onClick={onHome}>
-                  Back to Home
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div
-              role="alert"
-              className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
-            >
-              <span className="flex items-start gap-2 text-sm text-red-700">
-                <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                {apiError}
-              </span>
+        {apiError && isUnconfigured && (
+          <div
+            role="alert"
+            className="mx-auto mt-8 w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-amber-200"
+          >
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+              <AlertIcon className="h-6 w-6" />
+            </span>
+            <h2 className="mt-3 text-lg font-bold text-slate-900">AI service is not set up</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              This app needs an OpenAI API key to debate. Set the{' '}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">
+                OPENAI_API_KEY
+              </code>{' '}
+              environment variable — locally that&apos;s{' '}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend/server/.env</code>;
+              on Vercel it&apos;s Project Settings → Environment Variables (Production).{' '}
+              <span className="font-medium">
+                If you just added the key on Vercel, you must redeploy
+              </span>{' '}
+              — environment changes only take effect on a new deployment.
+            </p>
+            <div className="mt-4 flex justify-center gap-2">
               {pending && (
-                <Button variant="secondary" size="sm" onClick={retry}>
+                <Button size="sm" onClick={retry}>
                   <RefreshIcon className="h-4 w-4" />
                   Retry
                 </Button>
               )}
+              <Button variant="secondary" size="sm" onClick={onHome}>
+                Back to Home
+              </Button>
             </div>
-          ))}
+          </div>
+        )}
+
+        {apiError && !isUnconfigured && isApiDown && (
+          <div
+            role="alert"
+            className="mx-auto mt-8 w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-red-200"
+          >
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-500">
+              <AlertIcon className="h-6 w-6" />
+            </span>
+            <h2 className="mt-3 text-lg font-bold text-slate-900">
+              Can&apos;t reach the debate API
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              The opening statement, replies and scoring all need the backend API, and it
+              didn&apos;t answer. Please check:
+            </p>
+            <ul className="mx-auto mt-3 max-w-sm list-disc space-y-1 pl-5 text-left text-sm text-slate-600">
+              <li>Your internet connection.</li>
+              <li>
+                On Vercel, the project&apos;s <span className="font-medium">Root Directory</span>{' '}
+                is <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend</code>.
+              </li>
+              <li>Redeploy after changing any setting or environment variable.</li>
+              <li>
+                Open <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">/api/health</code> on
+                your deployment — it should return JSON like{' '}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">{'{"status":"ok"}'}</code>.
+              </li>
+            </ul>
+            <p className="mt-3 break-words text-xs text-slate-400">{apiError}</p>
+            <div className="mt-4 flex justify-center gap-2">
+              {pending && (
+                <Button size="sm" onClick={retry}>
+                  <RefreshIcon className="h-4 w-4" />
+                  Retry
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" onClick={onHome}>
+                Back to Home
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {apiError && !isUnconfigured && !isApiDown && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
+          >
+            <span className="flex items-start gap-2 text-sm text-red-700">
+              <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+              {apiError}
+            </span>
+            {pending && (
+              <Button variant="secondary" size="sm" onClick={retry}>
+                <RefreshIcon className="h-4 w-4" />
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
 
         {messages.map((message, index) => {
           if (message.type === 'user') return <MessageBubble key={message.id} message={message} />;
