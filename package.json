@@ -6,18 +6,18 @@
   "description": "Debate AI — Think. Argue. Improve. Debate an AI opponent that takes the opposite side.",
   "workspaces": [
     "frontend",
-    "backend"
+    "frontend/server"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
-    "dev:backend": "npm run dev --workspace backend",
-    "dev:frontend": "npm run dev --workspace frontend",
-    "build": "npm run build --workspace frontend && mkdir -p frontend/dist && rm -rf frontend/dist/* && cp -R dist/. frontend/dist/",
-    "start": "npm run start --workspace backend",
-    "test": "npm run test --workspace frontend"
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --workspace debate-ai-server\" \"npm run dev --workspace debate-ai-frontend\"",
+    "dev:backend": "npm run dev --workspace debate-ai-server",
+    "dev:frontend": "npm run dev --workspace debate-ai-frontend",
+    "build": "npm run build --workspace debate-ai-frontend",
+    "start": "npm run start --workspace debate-ai-server",
+    "test": "npm run test --workspace debate-ai-frontend"
   },
   "dependencies": {
     "cors": "^2.8.5",

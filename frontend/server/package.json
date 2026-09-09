@@ -1,5 +1,5 @@
 {
-  "name": "debate-ai-backend",
+  "name": "debate-ai-server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
