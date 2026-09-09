@@ -15,45 +15,57 @@ Debate AI is a web application where you enter a debate topic, choose a side, an
 
 ```
 debate-ai/
-├── api/
-│   └── index.js          # Vercel serverless function entry (imports the Express app)
-├── backend/
-│   ├── app.js            # Express app (shared by local dev + Vercel)
-│   ├── server.js         # Local dev server (loads .env, app.listen)
-│   ├── routes/debate.js
-│   ├── services/aiService.js
-│   └── .env.example
-├── frontend/
-│   ├── src/
+├── frontend/             # Vercel Root Directory ("frontend") — everything deploys from here
+│   ├── api/
+│   │   ├── index.js      # Vercel serverless entry (imports the Express app)
+│   │   └── [[...path]].js
+│   ├── server/           # Express backend (shared by local dev + Vercel)
+│   │   ├── app.js            # Express app (local static serve + API routes)
+│   │   ├── server.js         # Local dev server (loads .env, app.listen)
+│   │   ├── vercelHandler.js  # Adapter used by the serverless functions
+│   │   ├── routes/debate.js
+│   │   ├── services/aiService.js, offlineEngine.js
+│   │   └── .env.example
+│   ├── src/              # React app
 │   │   ├── components/
 │   │   ├── pages/
 │   │   └── services/
 │   ├── index.html
-│   └── vite.config.js    # Dev proxy: /api → localhost:3001
-├── vercel.json           # Vercel build + routing configuration
-├── package.json          # npm workspaces (frontend + backend)
+│   ├── vite.config.js    # Builds to frontend/dist; dev proxy: /api → localhost:3001
+│   ├── vercel.json       # Vercel build + routing config (read because Root Directory = frontend)
+│   └── dist/             # Build output (gitignored)
+├── package.json          # npm workspaces (frontend + frontend/server)
 └── README.md
 ```
 
+The backend lives **inside `frontend/`** on purpose: Vercel only deploys
+files under the project's Root Directory, and serverless functions must sit
+under it too. Keeping the Express app + `api/` entries in `frontend/` means
+the whole product ships from that one folder.
+
 ## Deploy to Vercel
 
-The project is **Vercel-ready** — `vercel.json` already configures the build,
-the static frontend output, and the `/api/*` routing to the serverless
-function. No extra setup is needed beyond adding your API key.
+The project is **Vercel-ready** — the build, the static output directory, and
+the `/api/*` serverless routing are all configured in `frontend/vercel.json`,
+which Vercel reads because the project's Root Directory is `frontend`. No
+extra setup is needed beyond adding your API key.
 
 1. **Push this repository to GitHub.**
 
 2. **Import it on Vercel:** go to [vercel.com/new](https://vercel.com/new) and
    import the repository.
 
-3. **Keep the Root Directory as the repository root** (leave it empty /
-   default). Do **not** set it to `frontend/` — the whole monorepo is needed
-   because the API function lives in `api/`.
+3. **Root Directory:** `frontend`. Everything that deploys — the React app,
+   the Express backend, and the `api/` serverless functions — lives inside
+   `frontend/`, so no part of the app is left behind when Vercel scopes the
+   deployment to this folder.
 
-4. **Framework Preset:** *Other* — `vercel.json` already sets the build
-   command (`npm run build`) and output directory (`dist` at the repo root).
-   If the dashboard still has an Output Directory field, set it to `dist`
-   (not `frontend/dist`).
+4. **Framework Preset:** *Other*. `frontend/vercel.json` already sets the
+   build command (`npm run build`, which runs Vite) and the output directory
+   `dist`. The build output lands in `frontend/dist`, which is exactly where
+   Vercel looks relative to the Root Directory — so the dashboard setting
+   should also read **Output Directory: `dist`** (it's relative to
+   `frontend/`, never `frontend/dist`).
 
 5. **Add the environment variable** (required):
 
@@ -93,7 +105,7 @@ driven by the model.
 
 When OpenAI is **not configured** (no key) or **can't be reached** (no network
 to `api.openai.com`, an outage, or a rate/invalid-key error), the app falls back
-to a small **local demo engine** (`backend/services/offlineEngine.js`) so the
+to a small **local demo engine** (`frontend/server/services/offlineEngine.js`) so the
 full product still works end-to-end and can be demonstrated anywhere. Replies
 produced this way are clearly labelled **"Offline replies"** in the UI.
 
@@ -116,17 +128,17 @@ From the project root:
 npm install
 ```
 
-This installs the frontend, backend, and root tooling (npm workspaces).
+This installs the frontend, the server, and the root tooling (npm workspaces).
 
 ### 2. Configure the API Key
 
 The API key is used **only** by the backend. Never put it in frontend code.
 
 ```bash
-cp backend/.env.example backend/.env
+cp frontend/server/.env.example frontend/server/.env
 ```
 
-Open `backend/.env` and set your key:
+Open `frontend/server/.env` and set your key:
 
 ```
 OPENAI_API_KEY=sk-your-key-here

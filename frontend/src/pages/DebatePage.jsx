@@ -313,13 +313,13 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
               </span>
               <h2 className="mt-3 text-lg font-bold text-slate-900">AI service is not set up</h2>
               <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                This app needs an OpenAI API key to debate. Add{' '}
+                This app needs an OpenAI API key to debate. Set the{' '}
                 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">
                   OPENAI_API_KEY
                 </code>{' '}
-                to <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">backend/.env</code>{' '}
-                (or the <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">OPENAI_API_KEY</code>{' '}
-                env var on your host) and reload the page.
+                environment variable on your host (locally, that's{' '}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend/server/.env</code>)
+                and reload the page.
               </p>
               <div className="mt-4 flex justify-center gap-2">
                 <Button variant="secondary" size="sm" onClick={onHome}>

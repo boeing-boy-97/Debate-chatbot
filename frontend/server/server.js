@@ -1,7 +1,7 @@
-// Local development server: loads backend/.env, then serves the Express app.
+// Local development server: loads frontend/server/.env, then serves the Express app.
 //
-// On Vercel this file is not used — api/index.js at the repository root is
-// the serverless entry point there.
+// On Vercel this file is not used — frontend/api/index.js is the serverless
+// entry point there.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -9,7 +9,7 @@ import app from './app.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Load backend/.env no matter which directory the server is started from.
+// Load frontend/server/.env no matter which directory the server is started from.
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const PORT = process.env.PORT || 3001;

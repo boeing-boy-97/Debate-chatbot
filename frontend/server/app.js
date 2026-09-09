@@ -11,8 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * The Express application.
  *
  * It is shared by two entry points:
- *  - backend/server.js — local development (loads backend/.env, calls app.listen)
- *  - api/index.js      — Vercel serverless function (Vercel manages the server)
+ *  - frontend/server/server.js — local development (loads frontend/server/.env, calls app.listen)
+ *  - frontend/api/index.js — Vercel serverless function (Vercel manages the server)
  */
 const app = express();
 
