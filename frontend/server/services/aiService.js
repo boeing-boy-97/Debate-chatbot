@@ -1,7 +1,12 @@
-import OpenAI from 'openai';
 import * as offline from './offlineEngine.js';
 
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+// The only AI dependency is the OpenAI chat-completions REST endpoint, called
+// with native fetch — no SDK, no node_modules imports at all. This keeps the
+// serverless functions tiny and immune to SDK/Node-version issues.
+const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_MODEL = 'gpt-4o-mini';
+const REQUEST_TIMEOUT_MS = 20000;
+const RETRY_DELAY_MS = 600;
 const VALID_POSITIONS = ['for', 'against'];
 const VALID_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
 
@@ -19,19 +24,114 @@ export function isAiConfigured() {
   return Boolean(key) && key !== 'your_api_key_here' && key !== 'sk-xxx';
 }
 
-function getClient() {
+/**
+ * Reads the API configuration per request (never at module load, so a local
+ * `.env` file loaded after imports is still honored).
+ */
+function getApiConfig() {
   if (!isAiConfigured()) {
     throw new ApiError(503, 'AI service is not configured.');
   }
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL || undefined,
-    // Keep the total worst-case time (timeout + 1 retry + backoff, ~45s) below
-    // the 60s Vercel serverless function limit, so a slow request still returns
-    // a friendly error (or offline fallback) instead of a platform 504.
-    timeout: 20000,
-    maxRetries: 1,
-  });
+  if (typeof fetch !== 'function') {
+    throw new ApiError(
+      502,
+      'Could not reach the AI service. Please check your connection and try again.'
+    );
+  }
+  const base =
+    (process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).trim().replace(/\/+$/, '') ||
+    DEFAULT_BASE_URL;
+  return {
+    url: `${base}/chat/completions`,
+    apiKey: process.env.OPENAI_API_KEY.trim(),
+    model: (process.env.OPENAI_MODEL || '').trim() || DEFAULT_MODEL,
+  };
+}
+
+/** Single POST attempt with a timeout; network failures propagate to the caller. */
+async function fetchOnce(config, body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(config.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Maps an HTTP response to content or a friendly ApiError (never leaks details). */
+async function handleCompletionResponse(response) {
+  // Invalid / missing key.
+  if (response.status === 401 || response.status === 403) {
+    throw new ApiError(503, 'AI service is not configured.');
+  }
+  // Out of quota or hitting provider rate limits.
+  if (response.status === 429) {
+    throw new ApiError(
+      429,
+      'You have reached the AI rate limit. Please wait a moment and then try again.'
+    );
+  }
+  // A 400 means the provider rejected the request shape (most commonly an
+  // unsupported response_format). complete() retries or remaps these; the raw
+  // 400 must never reach the caller as a "client input" error.
+  if (response.status === 400) {
+    throw new ApiError(400, 'Bad request.');
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      502,
+      'Could not reach the AI service. Please check your connection and try again.'
+    );
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+/**
+ * POSTs a chat-completions request, retrying once on network failures,
+ * timeouts, and upstream 5xx errors.
+ *
+ * Worst case (~41s) stays below the 60s Vercel serverless limit, so a slow
+ * request still returns a friendly error (or offline fallback) instead of a
+ * platform 504.
+ */
+async function requestCompletion(config, body) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+    let response;
+    try {
+      response = await fetchOnce(config, body);
+    } catch {
+      if (attempt === 0) continue;
+      throw new ApiError(
+        502,
+        'Could not reach the AI service. Please check your connection and try again.'
+      );
+    }
+    if (response.status >= 500 && attempt === 0) continue;
+    return handleCompletionResponse(response);
+  }
+  // Unreachable — the loop always returns or throws.
+  throw new ApiError(
+    502,
+    'Could not reach the AI service. Please check your connection and try again.'
+  );
 }
 
 /* ----------------------------- validation ----------------------------- */
@@ -193,52 +293,39 @@ function extractJson(text) {
 }
 
 async function complete(messages, { json = false } = {}) {
-  const client = getClient();
-  const request = {
-    model: MODEL,
+  const config = getApiConfig();
+  const body = {
+    model: config.model,
     messages,
     temperature: 0.7,
     max_tokens: 900,
   };
   if (json) {
-    request.response_format = { type: 'json_object' };
+    body.response_format = { type: 'json_object' };
   }
   try {
-    let completion;
-    try {
-      completion = await client.chat.completions.create(request);
-    } catch (error) {
-      // Some OpenAI-compatible providers do not support response_format; retry
-      // once without it, keeping the strict JSON instruction in the prompt.
-      if (json && error?.status === 400) {
-        completion = await client.chat.completions.create({
-          ...request,
-          response_format: undefined,
-        });
-      } else {
-        throw error;
+    return await requestCompletion(config, body);
+  } catch (error) {
+    // Some OpenAI-compatible providers do not support response_format; retry
+    // once without it, keeping the strict JSON instruction in the prompt.
+    if (json && error instanceof ApiError && error.status === 400) {
+      const { response_format, ...plainBody } = body;
+      void response_format;
+      try {
+        return await requestCompletion(config, plainBody);
+      } catch (retryError) {
+        // Rejected even without response_format: a configuration problem
+        // (e.g. unknown model), not a user-input problem.
+        if (retryError instanceof ApiError && retryError.status === 400) {
+          throw new ApiError(503, 'AI service is not configured.');
+        }
+        throw retryError;
       }
     }
-    return completion.choices[0].message.content || '';
-  } catch (error) {
-    // Invalid / missing key.
-    if (error?.status === 401 || error?.status === 403) {
+    // A non-format 400 (e.g. unknown model) is a misconfiguration, not bad
+    // user input — report it as such so the offline fallback can take over.
+    if (error instanceof ApiError && error.status === 400) {
       throw new ApiError(503, 'AI service is not configured.');
-    }
-    // Out of quota or hitting provider rate limits.
-    if (error?.status === 429) {
-      throw new ApiError(
-        429,
-        'You have reached the AI rate limit. Please wait a moment and then try again.'
-      );
-    }
-    // No HTTP status means a transport/connectivity problem (DNS, TLS, reset,
-    // timeout), not a real answer from the model.
-    if (!error?.status) {
-      throw new ApiError(
-        502,
-        'Could not reach the AI service. Please check your connection and try again.'
-      );
     }
     throw error;
   }
