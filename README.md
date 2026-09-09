@@ -51,7 +51,9 @@ function. No extra setup is needed beyond adding your API key.
    because the API function lives in `api/`.
 
 4. **Framework Preset:** *Other* — `vercel.json` already sets the build
-   command (`npm run build`) and output directory (`frontend/dist`).
+   command (`npm run build`) and output directory (`dist` at the repo root).
+   If the dashboard still has an Output Directory field, set it to `dist`
+   (not `frontend/dist`).
 
 5. **Add the environment variable** (required):
 

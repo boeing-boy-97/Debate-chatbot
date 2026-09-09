@@ -47,7 +47,7 @@ app.use('/api', (_req, res) => {
 // If the frontend has been built, serve it from the backend too (local only —
 // on Vercel static files are served from the CDN and this directory is not
 // part of the deployment).
-const distDir = path.resolve(__dirname, '../frontend/dist');
+const distDir = path.resolve(__dirname, '../dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
   app.get('*', (_req, res) => {
