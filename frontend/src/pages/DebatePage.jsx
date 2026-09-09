@@ -13,6 +13,7 @@ import {
   TrashIcon,
   AlertIcon,
   ChartIcon,
+  BoltIcon,
 } from '../components/Icons.jsx';
 import * as api from '../services/api.js';
 import { saveDebate, updateDebate } from '../services/history.js';
@@ -59,6 +60,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   const [saved, setSaved] = useState(Boolean(debate.initialEvaluation));
   const [inputError, setInputError] = useState('');
   const [apiError, setApiError] = useState('');
+  const [offlineMode, setOfflineMode] = useState(false);
 
   const started = useRef(false);
   const scrollRef = useRef(null);
@@ -88,6 +90,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     try {
       const res = await api.startDebate({ topic, userPosition, difficulty });
       setMessages([{ type: 'ai', text: res.reply, id: crypto.randomUUID() }]);
+      if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
       setApiError(error.message);
@@ -119,6 +122,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         conversation: toApiConversation(next),
       });
       setMessages([...next, { type: 'ai', sections: res.reply, id: crypto.randomUUID() }]);
+      if (res.mode === 'offline') setOfflineMode(true);
     } catch (error) {
       setApiError(error.message);
       setPending({ type: 'send', argument: value });
@@ -139,6 +143,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         conversation: toApiConversation(messages),
       });
       setMessages([...messages, { type: 'ai', sections: res.reply, id: crypto.randomUUID() }]);
+      if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
       setApiError(error.message);
@@ -162,6 +167,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         setMessages((list) =>
           list.map((m) => (m.id === aiMessage.id ? { ...m, analysis: res.analysis } : m))
         );
+        if (res.mode === 'offline') setOfflineMode(true);
         setPending(null);
       })
       .catch((error) => {
@@ -189,6 +195,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       });
       setEvaluation(res.evaluation);
       setSaved(false);
+      if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
       if (final) setEnded(true);
     } catch (error) {
@@ -272,34 +279,70 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         </div>
       </header>
 
+      {offlineMode && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-amber-200">
+          <BoltIcon className="h-3.5 w-3.5 shrink-0" />
+          <span>
+            <span className="font-bold">Offline replies</span> — the AI service isn't reachable
+            right now, so responses are generated locally on this device. Set an OpenAI key and a
+            network connection to enable live AI debate.
+          </span>
+        </div>
+      )}
+
       {/* Conversation */}
       <div
         ref={scrollRef}
         className="nice-scroll mt-3 flex-1 space-y-5 overflow-y-auto rounded-2xl bg-slate-100 p-4 ring-1 ring-slate-200 sm:p-5"
       >
         {messages.length === 0 && !busy && !apiError && (
-          <p className="pt-8 text-center text-sm text-slate-500">
-            The debate will begin shortly…
-          </p>
-        )}
-
-        {apiError && (
-          <div
-            role="alert"
-            className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
-          >
-            <span className="flex items-start gap-2 text-sm text-red-700">
-              <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
-              {apiError}
-            </span>
-            {pending && (
-              <Button variant="secondary" size="sm" onClick={retry}>
-                <RefreshIcon className="h-4 w-4" />
-                Retry
-              </Button>
-            )}
+          <div className="flex flex-1 flex-col items-center justify-center pt-6 text-center">
+            <p className="text-sm text-slate-500">The debate will begin shortly…</p>
           </div>
         )}
+
+        {apiError &&
+          (apiError === 'AI service is not configured.' ? (
+            <div
+              role="alert"
+              className="mx-auto mt-8 w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-amber-200"
+            >
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+                <AlertIcon className="h-6 w-6" />
+              </span>
+              <h2 className="mt-3 text-lg font-bold text-slate-900">AI service is not set up</h2>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                This app needs an OpenAI API key to debate. Add{' '}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">
+                  OPENAI_API_KEY
+                </code>{' '}
+                to <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">backend/.env</code>{' '}
+                (or the <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">OPENAI_API_KEY</code>{' '}
+                env var on your host) and reload the page.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <Button variant="secondary" size="sm" onClick={onHome}>
+                  Back to Home
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div
+              role="alert"
+              className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
+            >
+              <span className="flex items-start gap-2 text-sm text-red-700">
+                <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                {apiError}
+              </span>
+              {pending && (
+                <Button variant="secondary" size="sm" onClick={retry}>
+                  <RefreshIcon className="h-4 w-4" />
+                  Retry
+                </Button>
+              )}
+            </div>
+          ))}
 
         {messages.map((message, index) => {
           if (message.type === 'user') return <MessageBubble key={message.id} message={message} />;
@@ -321,20 +364,19 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
 
         {busy && !evaluating && <ThinkingIndicator label="AI is thinking..." />}
         {evaluating && <ThinkingIndicator label="Evaluating debate..." />}
-      </div>
 
-      {/* Evaluation */}
-      {evaluation && (
-        <div className="mt-3">
-          <EvaluationCard
-            evaluation={evaluation}
-            saved={saved}
-            onSave={saveToHistory}
-            onNewDebate={onRestart}
-            onHome={onHome}
-          />
-        </div>
-      )}
+        {evaluation && (
+          <div className="pt-1">
+            <EvaluationCard
+              evaluation={evaluation}
+              saved={saved}
+              onSave={saveToHistory}
+              onNewDebate={onRestart}
+              onHome={onHome}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Controls */}
       <div className="mt-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">

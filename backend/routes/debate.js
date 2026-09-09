@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import {
   ApiError,
-  generateOpening,
-  generateCounterargument,
-  analyzeArgument,
-  evaluateDebate,
+  startDebate,
+  sendDebateMessage,
+  analyzeDebateArgument,
+  evaluateDebateTurn,
 } from '../services/aiService.js';
 
 const router = Router();
@@ -27,57 +27,15 @@ const handle = (fn) => async (req, res, next) => {
 };
 
 // POST /api/debate/start — starts a debate and returns the AI opening statement.
-router.post(
-  '/start',
-  handle(async (body) => ({
-    reply: await generateOpening({
-      topic: body.topic,
-      userPosition: body.userPosition,
-      difficulty: body.difficulty,
-    }),
-  }))
-);
+router.post('/start', handle(async (body) => startDebate(body)));
 
 // POST /api/debate/message — sends the user's latest argument, returns a counterargument.
-router.post(
-  '/message',
-  handle(async (body) => ({
-    reply: await generateCounterargument({
-      topic: body.topic,
-      userPosition: body.userPosition,
-      aiPosition: body.aiPosition,
-      difficulty: body.difficulty,
-      conversation: body.conversation,
-    }),
-  }))
-);
+router.post('/message', handle(async (body) => sendDebateMessage(body)));
 
 // POST /api/debate/analyze — analyzes the user's latest argument.
-router.post(
-  '/analyze',
-  handle(async (body) => ({
-    analysis: await analyzeArgument({
-      topic: body.topic,
-      userPosition: body.userPosition,
-      difficulty: body.difficulty,
-      argument: body.argument,
-      lastAiResponse: body.lastAiResponse,
-    }),
-  }))
-);
+router.post('/analyze', handle(async (body) => analyzeDebateArgument(body)));
 
 // POST /api/debate/evaluate — evaluates the complete debate.
-router.post(
-  '/evaluate',
-  handle(async (body) => ({
-    evaluation: await evaluateDebate({
-      topic: body.topic,
-      userPosition: body.userPosition,
-      aiPosition: body.aiPosition,
-      difficulty: body.difficulty,
-      conversation: body.conversation,
-    }),
-  }))
-);
+router.post('/evaluate', handle(async (body) => evaluateDebateTurn(body)));
 
 export default router;
