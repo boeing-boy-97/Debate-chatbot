@@ -61,12 +61,12 @@ export default function EvaluationCard({ evaluation, saved, onSave, onNewDebate,
       </div>
 
       <div className="mt-5 space-y-3 text-sm leading-relaxed text-slate-700">
-        <p className="rounded-xl bg-slate-50 p-3">{explanation || 'The AI did not provide an explanation.'}</p>
-        <p>
+        <p className="break-words rounded-xl bg-slate-50 p-3">{explanation || 'The AI did not provide an explanation.'}</p>
+        <p className="break-words">
           <span className="font-semibold text-slate-800">Strongest argument: </span>
           {strongestArgument || '—'}
         </p>
-        <p>
+        <p className="break-words">
           <span className="font-semibold text-slate-800">Weakest argument: </span>
           {weakestArgument || '—'}
         </p>

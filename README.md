@@ -78,8 +78,9 @@ Notes:
 
 - Vercel serverless functions are limited to 60 seconds on the Hobby plan
   (300s on Pro). The app's AI calls normally take 3–15 seconds, and the
-  OpenAI client is configured with a 30s timeout, so the limit is not an
-  issue in practice.
+  OpenAI client is configured with a 20s timeout and a single retry, so the
+  worst case (~45s) stays below the limit and returns a friendly error
+  instead of a platform 504.
 - The OpenAI API key is only ever read on the server (the serverless
   function) — it is never exposed to the browser.
 
@@ -120,8 +121,7 @@ This installs the frontend, backend, and root tooling (npm workspaces).
 The API key is used **only** by the backend. Never put it in frontend code.
 
 ```bash
-cd backend
-cp .env.example .env
+cp backend/.env.example backend/.env
 ```
 
 Open `backend/.env` and set your key:
@@ -129,6 +129,9 @@ Open `backend/.env` and set your key:
 ```
 OPENAI_API_KEY=sk-your-key-here
 ```
+
+(There is also a root [`.env.example`](.env.example) listing every variable
+the app reads — useful as a checklist when configuring Vercel.)
 
 Optional settings (also shown in `.env.example`):
 

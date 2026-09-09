@@ -25,6 +25,9 @@
     "express": "^4.21.2",
     "openai": "^4.77.0"
   },
+  "overrides": {
+    "qs": "^6.16.0"
+  },
   "devDependencies": {
     "concurrently": "^9.1.0"
   }

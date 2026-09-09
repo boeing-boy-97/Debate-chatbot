@@ -1,5 +1,7 @@
 // Debate history persisted in browser localStorage.
 
+import uid from './uid.js';
+
 const KEY = 'debate-ai-history';
 
 function read() {
@@ -26,7 +28,7 @@ export function loadHistory() {
 
 export function saveDebate(entry) {
   const list = read();
-  const item = { id: crypto.randomUUID(), date: new Date().toISOString(), ...entry };
+  const item = { id: uid('debate'), date: new Date().toISOString(), ...entry };
   write([item, ...list]);
   return item;
 }

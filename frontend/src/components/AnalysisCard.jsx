@@ -21,19 +21,19 @@ export default function AnalysisCard({ analysis }) {
       <dl className="mt-3 space-y-3 text-sm">
         <div>
           <dt className="font-semibold text-slate-700">Logic</dt>
-          <dd className="mt-0.5 text-slate-600">{logic}</dd>
+          <dd className="mt-0.5 break-words text-slate-600">{logic}</dd>
         </div>
         <div>
           <dt className="font-semibold text-slate-700">Evidence</dt>
-          <dd className="mt-0.5 text-slate-600">{evidence}</dd>
+          <dd className="mt-0.5 break-words text-slate-600">{evidence}</dd>
         </div>
         <div>
           <dt className="font-semibold text-slate-700">Weak Point</dt>
-          <dd className="mt-0.5 text-slate-600">{weakness}</dd>
+          <dd className="mt-0.5 break-words text-slate-600">{weakness}</dd>
         </div>
         <div className="rounded-xl bg-white p-3 ring-1 ring-blue-100">
           <dt className="font-semibold text-blue-700">How to Improve</dt>
-          <dd className="mt-0.5 text-slate-700">{improvement}</dd>
+          <dd className="mt-0.5 break-words text-slate-700">{improvement}</dd>
         </div>
       </dl>
     </div>

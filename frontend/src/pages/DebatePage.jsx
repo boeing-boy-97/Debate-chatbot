@@ -17,6 +17,7 @@ import {
 } from '../components/Icons.jsx';
 import * as api from '../services/api.js';
 import { saveDebate, updateDebate } from '../services/history.js';
+import uid from '../services/uid.js';
 
 /** Plain-text version of an AI message (with or without structured sections). */
 function aiText(message) {
@@ -89,7 +90,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     setApiError('');
     try {
       const res = await api.startDebate({ topic, userPosition, difficulty });
-      setMessages([{ type: 'ai', text: res.reply, id: crypto.randomUUID() }]);
+      setMessages([{ type: 'ai', text: res.reply, id: uid('message') }]);
       if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
@@ -109,7 +110,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     }
     setInputError('');
     setApiError('');
-    const next = [...messages, { type: 'user', text: value, id: crypto.randomUUID() }];
+    const next = [...messages, { type: 'user', text: value, id: uid('message') }];
     setMessages(next);
     setInput('');
     setBusy(true);
@@ -121,7 +122,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         difficulty,
         conversation: toApiConversation(next),
       });
-      setMessages([...next, { type: 'ai', sections: res.reply, id: crypto.randomUUID() }]);
+      setMessages([...next, { type: 'ai', sections: res.reply, id: uid('message') }]);
       if (res.mode === 'offline') setOfflineMode(true);
     } catch (error) {
       setApiError(error.message);
@@ -142,7 +143,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         difficulty,
         conversation: toApiConversation(messages),
       });
-      setMessages([...messages, { type: 'ai', sections: res.reply, id: crypto.randomUUID() }]);
+      setMessages([...messages, { type: 'ai', sections: res.reply, id: uid('message') }]);
       if (res.mode === 'offline') setOfflineMode(true);
       setPending(null);
     } catch (error) {
