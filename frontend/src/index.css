@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+}
+
+/* Thin, subtle scrollbars for the conversation area */
+.nice-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.nice-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nice-scroll::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-300;
+}
+.nice-scroll::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
+}
