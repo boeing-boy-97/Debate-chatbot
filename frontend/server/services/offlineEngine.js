@@ -1,14 +1,7 @@
 /**
  * Offline (demo) debate engine.
  *
- * This is a deterministic, locally-computed fallback used ONLY when the real
- * OpenAI service cannot be reached or has not been configured. It lets the
- * whole product flow run end-to-end without network access so the app is
- * always demonstrable. Replies are clearly framed as offline demo responses
- * and are honest about being heuristic rather than "real" AI reasoning.
- *
- * When OPENAI_API_KEY is set and api.openai.com is reachable, the app uses
- * real OpenAI and this module is never consulted.
+ * Deterministic, locally-computed fallback used ONLY when the AI service cannot be reached.
  */
 
 function clean(value, fallback = '') {
@@ -27,21 +20,6 @@ function lastUserArgument(conversation) {
   return '';
 }
 
-function turns(conversation) {
-  if (!Array.isArray(conversation)) return 0;
-  return conversation.filter((m) => m && (m.role === 'user' || m.role === 'assistant')).length;
-}
-
-function userCount(conversation) {
-  if (!Array.isArray(conversation)) return 0;
-  return conversation.filter((m) => m && m.role === 'user').length;
-}
-
-function aiCount(conversation) {
-  if (!Array.isArray(conversation)) return 0;
-  return conversation.filter((m) => m && m.role === 'assistant').length;
-}
-
 function sideLabel(position) {
   return position === 'for' ? 'FOR' : 'AGAINST';
 }
@@ -52,10 +30,13 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, Math.round(num)));
 }
 
-/** Measured 0-100 proxy for "strength" based on length and structure. */
+function wordsCount(t) {
+  return clean(t).split(/\s+/).filter(Boolean).length;
+}
+
 function strength(text) {
   const t = clean(text);
-  const words = t.split(/\s+/).filter(Boolean).length;
+  const words = wordsCount(t);
   const sentences = t.split(/[.!?]+/).filter((s) => s.trim()).length || 1;
   let score = 30 + Math.min(35, words * 1.6) + Math.min(25, sentences * 5);
   if (/because|therefore|thus|since|however|but|for example|evidence|data|research/.test(t)) {
@@ -67,16 +48,13 @@ function strength(text) {
 
 /* ------------------------------ opening ------------------------------ */
 
-export function offlineOpening({ topic, userPosition, difficulty }) {
+export function offlineOpening({ topic, userPosition }) {
   const cleanTopic = clean(topic, 'the topic');
   const aiPosition = userPosition === 'for' ? 'against' : 'for';
   return (
     `I will argue ${sideLabel(aiPosition)} the statement: "${cleanTopic}".\n\n` +
-    `Taking this side may sound straightforward at first, but the more you press on it, the more it depends ` +
-    `on assumptions that are easy to assert and hard to prove. My job here is to test whether those ` +
-    `assumptions actually hold.\n\n` +
-    `Opening challenge: in your view, what is the single strongest reason to support your side — and what ` +
-    `would it take for you to change your mind?`
+    `Taking this side requires examining the trade-offs and unstated assumptions behind the statement. ` +
+    `Opening challenge: what is the single strongest piece of evidence or reasoning supporting your view, and how do you address the main counterargument?`
   );
 }
 
@@ -94,28 +72,24 @@ export function offlineCounterargument({ topic, conversation }) {
   let challenge;
 
   if (!argument) {
-    counterargument = `On "${cleanTopic}" I need a concrete claim from you before I can push back fairly.`;
-    why = `A good debate starts from a clear, falsifiable position rather than a vague preference.`;
-    challenge = `State your position in one clear sentence that could in principle be shown to be wrong.`;
+    counterargument = `On "${cleanTopic}", a clear claim is needed to engage in debate.`;
+    why = `A debate requires a falsifiable thesis with supporting premises.`;
+    challenge = `What is your main assertion regarding "${cleanTopic}"?`;
   } else if (asksQuestion) {
-    counterargument = `That question is worth asking, but on "${cleanTopic}" reframing the issue does not settle it — the real disagreement is about the costs and trade-offs.`;
-    why = `Every position here has both benefits and drawbacks. The decisive step is not to pose the question but to defend which trade-off you accept and why.`;
-    challenge = `Can you commit to one concrete position on ${cleanTopic} and defend the trade-off you are willing to accept?`;
+    counterargument = `While that is an important question regarding "${cleanTopic}", reframing the debate does not resolve the central disagreement.`;
+    why = `Debates require committing to a specific thesis and defending the associated trade-offs rather than raising questions.`;
+    challenge = `What specific policy or principle on "${cleanTopic}" are you prepared to defend?`;
   } else if (short) {
-    counterargument = `You argued, "${snippet}". That is a start, but on "${cleanTopic}" this single point leaves the biggest objections untouched.`;
-    why = `A short assertion can sound compelling, yet it rarely anticipates the counterexamples and second-order effects that decide the question.`;
-    challenge = `Can you give a concrete example or a piece of evidence that supports "${snippet}", and then answer the strongest objection to it?`;
+    counterargument = `Regarding your claim that "${snippet}", this assertion overlooks significant counterexamples on "${cleanTopic}".`;
+    why = `Brief assertions sound plausible initially, but they fail to account for second-order consequences and systemic trade-offs.`;
+    challenge = `How does your position handle the strongest practical counterexample on "${cleanTopic}"?`;
   } else {
-    counterargument = `You argued that "${snippet}". That is a reasonable line, but it overlooks important counterexamples and the consequences that follow from it.`;
-    why = `Strong arguments here tend to focus on one benefit while ignoring who bears the cost and how the change plays out over time. Until those are addressed, the case remains one-sided.`;
-    challenge = `What is the strongest real-world counterexample to your claim, and how would you answer it?`;
+    counterargument = `While you argue that "${snippet}", that argument focuses on isolated benefits while ignoring systemic drawbacks.`;
+    why = `A complete position must weigh both costs and benefits rather than assuming one side has no downside.`;
+    challenge = `What major trade-off does your position create on "${cleanTopic}", and why is that trade-off acceptable?`;
   }
 
   return { counterargument, why, challenge };
-}
-
-function wordsCount(t) {
-  return clean(t).split(/\s+/).filter(Boolean).length;
 }
 
 /* ------------------------------ analysis ------------------------------ */
@@ -124,34 +98,43 @@ export function offlineAnalysis({ topic, argument }) {
   const cleanTopic = clean(topic, 'the topic');
   const arg = clean(argument, '');
   const s = strength(arg);
-  // analysis.score is 1-10; convert 0-100 proxy.
   const score = clamp(Math.round((s / 100) * 10), 1, 10);
-  const hasClaim = arg.length > 40;
   const hasReasoning = /because|therefore|so|since|thus|but|however|means/.test(arg);
-  const hasExample = /for example|for instance|e\.g|such as|like|consider|suppose|percent|%|data|research|study/.test(arg);
+  const hasExample = /for example|for instance|e\.g|such as|like|consider|percent|%|data|research|study/.test(arg);
 
   const logic = hasReasoning
-    ? `The reasoning connects a premise to a conclusion, which gives the argument a logical spine.`
-    : `The argument states a position but gives little reasoning that links a premise to its conclusion.`;
+    ? `The argument links a premise to a conclusion using causal connectives.`
+    : `The argument states a position with limited explicit logical connection between premise and conclusion.`;
 
-  const evidence = hasExample
-    ? `There is at least one concrete example or datum, which grounds the claim — good.`
-    : `The argument would be much stronger with concrete evidence — a statistic, case, or real-world example — rather than assertions.`;
+  const evidenceQuality = hasExample
+    ? `Concrete example or empirical indicator provided to ground the claim.`
+    : `The argument relies on assertion rather than verifiable evidence or data.`;
 
-  const weakness = hasClaim
-    ? `It does not fully address the strongest counterargument against "${cleanTopic}", so a skeptic is left with an easy rebuttal.`
-    : `It is too brief to expose the reasoning, so there is little for an opponent to engage with and for a judge to credit.`;
+  const relevance = `Directly addresses the topic "${cleanTopic}".`;
+  const clarity = `Clear and understandable presentation.`;
+  const rebuttalStrength = `The argument states its thesis but leaves key counter-objections unaddressed.`;
+  const logicalFallacies = 'No clear logical fallacy detected.';
 
   const improvement = hasReasoning && hasExample
-    ? `Tighten it: state the claim, support it with one strong example, then explicitly answer the best objection before concluding.`
-    : `Strengthen it by adding a concrete example, explaining why that example matters, and then pre-empting the most likely objection.`;
+    ? `State your core claim, provide one piece of verifiable evidence, and pre-empt the primary counterargument.`
+    : `Add concrete evidence or a specific real-world example, and explain why it proves your premise.`;
 
-  return { score, logic, evidence, weakness, improvement };
+  return {
+    score,
+    argumentStrength: s,
+    logic,
+    evidenceQuality,
+    relevance,
+    clarity,
+    rebuttalStrength,
+    logicalFallacies,
+    improvement,
+  };
 }
 
 /* ----------------------------- evaluation ----------------------------- */
 
-export function offlineEvaluation({ topic, userPosition, aiPosition, conversation }) {
+export function offlineEvaluation({ topic, conversation }) {
   const cleanTopic = clean(topic, 'the topic');
   const userArgs = (Array.isArray(conversation) ? conversation : [])
     .filter((m) => m && m.role === 'user' && typeof m.content === 'string')
@@ -172,18 +155,17 @@ export function offlineEvaluation({ topic, userPosition, aiPosition, conversatio
         persuasiveness: 0,
       },
       winner: 'tie',
-      explanation: `Not enough of a debate took place yet to give a meaningful verdict on "${cleanTopic}".`,
+      explanation: `Not enough debate content to evaluate yet for "${cleanTopic}".`,
+      strengths: [],
+      weaknesses: [],
       strongestArgument: '',
       weakestArgument: '',
-      improvementTips: [
-        'Send at least one full argument so there is something to evaluate.',
-        'Support your claim with a concrete example or piece of evidence.',
-        'Answer the strongest objection to your side.',
-      ],
+      aiStrongestCounter: '',
+      logicalFallacies: 'No clear logical fallacy detected.',
+      improvementTips: ['Provide at least one complete argument to evaluate.'],
     };
   }
 
-  // Composite quality from the user's messages.
   let total = 0;
   let longest = '';
   let shortest = null;
@@ -194,14 +176,15 @@ export function offlineEvaluation({ topic, userPosition, aiPosition, conversatio
     if (!shortest || a.length < shortest.length) shortest = a;
   });
   const avgUser = Math.round(total / userArgs.length);
-  // Simulated opponent pressure rises with how much the user wrote.
-  const aiAdj = Math.max(45, Math.min(90, avgUser + 10));
+  const aiAdj = Math.max(45, Math.min(90, avgUser + 8));
+
   const argumentQuality = clamp(avgUser + 4, 0, 100);
   const logicalReasoning = clamp(avgUser + 2, 0, 100);
-  const evidence = clamp(avgUser - 8, 0, 100);
+  const evidence = clamp(avgUser - 6, 0, 100);
   const rebuttalQuality = clamp(Math.min(avgUser, 88), 0, 100);
   const consistency = clamp(avgUser + (nUser > 1 ? 4 : -6), 0, 100);
   const persuasiveness = clamp(avgUser, 0, 100);
+
   const userScore = Math.round(
     (argumentQuality + logicalReasoning + evidence + rebuttalQuality + consistency + persuasiveness) / 6
   );
@@ -215,13 +198,10 @@ export function offlineEvaluation({ topic, userPosition, aiPosition, conversatio
 
   const explanation =
     winner === 'user'
-      ? `You built a fairly consistent case on "${cleanTopic}" and engaged with the counterpoints. The main way to push higher is to back each claim with concrete evidence.`
+      ? `You maintained a clear stance on "${cleanTopic}" and successfully addressed counterpoints.`
       : winner === 'ai'
-        ? `The AI opponent stayed one step ahead: your claims were asserted more often than they were supported with evidence or tested against the strongest objection on "${cleanTopic}".`
-        : `It was close on "${cleanTopic}". Both sides made reasonable points, but the outcome hinged on how much evidence and direct rebuttal each side produced.`;
-
-  const strongestArgument = longest ? longest.slice(0, 240) : '';
-  const weakestArgument = shortest ? shortest.slice(0, 240) : '';
+        ? `The AI presented strong counterarguments that exposed unaddressed trade-offs in your position on "${cleanTopic}".`
+        : `A balanced debate on "${cleanTopic}". Both sides established valid points with room for deeper evidence.`;
 
   return {
     overallScore,
@@ -237,18 +217,22 @@ export function offlineEvaluation({ topic, userPosition, aiPosition, conversatio
     },
     winner,
     explanation,
-    strongestArgument,
-    weakestArgument,
+    strengths: [
+      'Maintained a consistent position throughout the debate.',
+      'Engaged directly with the topic.',
+    ],
+    weaknesses: [
+      'Could incorporate more concrete statistics or empirical examples.',
+      'Pre-empting opposing objections would make the case stronger.',
+    ],
+    strongestArgument: longest ? longest.slice(0, 240) : '',
+    weakestArgument: shortest ? shortest.slice(0, 240) : '',
+    aiStrongestCounter: `Highlighted key trade-offs and second-order effects of your position on "${cleanTopic}".`,
+    logicalFallacies: 'No clear logical fallacy detected.',
     improvementTips: [
-      evidence < 60
-        ? 'Support each central claim with a concrete example, statistic, or named case.'
-        : 'Keep grounding claims in concrete evidence as you did — now sharpen your rebuttals.',
-      rebuttalQuality < 70
-        ? 'Explicitly restate and then answer the strongest objection to your side.'
-        : 'Pre-empt the opponent’s best move before they make it.',
-      consistency < 70
-        ? 'Make sure every new argument agrees with positions you took earlier.'
-        : 'Tie each new argument back to your core thesis to keep the case coherent.',
+      'Support claims with concrete data or real-world case studies.',
+      'Explicitly acknowledge and counter the opponent’s best points.',
+      'Connect each claim directly back to your central thesis.',
     ],
   };
 }

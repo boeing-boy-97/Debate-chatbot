@@ -14,9 +14,11 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
   const [position, setPosition] = useState(defaults?.userPosition || null);
   const [difficulty, setDifficulty] = useState(defaults?.difficulty || 'Intermediate');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   function submit(event) {
     event.preventDefault();
+    if (submitting) return;
     if (!topic.trim()) {
       setError('Please enter a debate topic.');
       return;
@@ -26,13 +28,14 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
       return;
     }
     setError('');
+    setSubmitting(true);
     onStart({ topic: topic.trim(), userPosition: position, difficulty });
   }
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10">
       <div className="mb-6 flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={onBack}>
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={submitting}>
           <HomeIcon className="h-4 w-4" />
           Back to Home
         </Button>
@@ -62,14 +65,16 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
               onChange={(e) => setTopic(e.target.value)}
               placeholder="Enter your debate topic"
               maxLength={300}
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              disabled={submitting}
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-400"
             />
             <p className="mt-2 text-xs text-slate-500">
               Hint: try{' '}
               <button
                 type="button"
                 onClick={() => setTopic(EXAMPLE_TOPIC)}
-                className="font-medium text-blue-600 underline decoration-blue-200 underline-offset-2 hover:text-blue-700"
+                disabled={submitting}
+                className="font-medium text-blue-600 underline decoration-blue-200 underline-offset-2 hover:text-blue-700 disabled:text-slate-400"
               >
                 {EXAMPLE_TOPIC}
               </button>
@@ -90,9 +95,10 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
                     key={value}
                     type="button"
                     onClick={() => setPosition(value)}
+                    disabled={submitting}
                     aria-pressed={selected}
                     className={classNames(
-                      'rounded-xl border-2 px-4 py-4 text-center transition',
+                      'rounded-xl border-2 px-4 py-4 text-center transition disabled:opacity-50',
                       selected
                         ? value === 'for'
                           ? 'border-blue-600 bg-blue-50 text-blue-700'
@@ -123,9 +129,10 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
                     key={level}
                     type="button"
                     onClick={() => setDifficulty(level)}
+                    disabled={submitting}
                     aria-pressed={selected}
                     className={classNames(
-                      'rounded-xl border-2 px-3 py-2.5 text-sm font-medium transition',
+                      'rounded-xl border-2 px-3 py-2.5 text-sm font-medium transition disabled:opacity-50',
                       selected
                         ? 'border-blue-600 bg-blue-50 text-blue-700'
                         : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
@@ -144,7 +151,7 @@ export default function SetupPage({ defaults = null, onBack, onStart }) {
             </p>
           )}
 
-          <Button type="submit" size="lg" className="w-full">
+          <Button type="submit" size="lg" loading={submitting} disabled={submitting} className="w-full justify-center">
             Start Debate
             <ArrowRightIcon className="h-5 w-5" />
           </Button>

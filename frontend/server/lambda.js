@@ -1,16 +1,19 @@
-// Shared wrapper for the Vercel serverless functions in frontend/api/.
-//
-// Each file under frontend/api/ maps 1:1 to an HTTP route (e.g.
-// frontend/api/debate/start.js -> POST /api/debate/start) and delegates to the
-// same aiService functions the local Express server uses, so local dev and
-// Vercel always run identical business logic.
 import { ApiError } from './services/aiService.js';
 
-/** Vercel usually parses JSON bodies, but be defensive: accept a raw string. */
+/** Vercel parses JSON bodies, but be defensive for buffers/strings. */
 function readBody(req) {
   const raw = req?.body;
   if (raw == null || raw === '') return {};
-  if (typeof raw === 'object') return raw;
+  if (typeof raw === 'object' && !Buffer.isBuffer(raw)) return raw;
+  if (Buffer.isBuffer(raw)) {
+    try {
+      const str = raw.toString('utf-8');
+      const parsed = JSON.parse(str);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      throw new ApiError(400, 'Invalid request body. Please send valid JSON.');
+    }
+  }
   if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw);
@@ -23,9 +26,7 @@ function readBody(req) {
 }
 
 /**
- * Builds a POST-only JSON handler around an aiService function.
- * Validation errors (ApiError) become friendly JSON responses with the right
- * status code; unexpected errors become a generic 500 (details stay in logs).
+ * Shared POST handler wrapper for Vercel serverless functions in frontend/api/.
  */
 export function debateHandler(serviceFn) {
   return async function handler(req, res) {
@@ -34,7 +35,8 @@ export function debateHandler(serviceFn) {
       return res.status(405).json({ error: 'Method not allowed.' });
     }
     try {
-      const data = await serviceFn(readBody(req));
+      const body = readBody(req);
+      const data = await serviceFn(body);
       return res.status(200).json(data);
     } catch (error) {
       if (error instanceof ApiError) {
@@ -42,7 +44,7 @@ export function debateHandler(serviceFn) {
       }
       console.error('[api error]', error);
       return res.status(500).json({
-        error: 'Something went wrong while contacting the AI. Please try again.',
+        error: 'AI service temporarily unavailable.',
       });
     }
   };

@@ -9,8 +9,7 @@ import {
 
 const router = Router();
 
-// Wrap handlers so thrown errors become friendly JSON responses.
-const handle = (fn) => async (req, res, next) => {
+const handle = (fn) => async (req, res) => {
   try {
     const data = await fn(req.body);
     res.json(data);
@@ -18,24 +17,23 @@ const handle = (fn) => async (req, res, next) => {
     if (error instanceof ApiError) {
       return res.status(error.status).json({ error: error.message });
     }
-    // Log the technical detail server-side only.
     console.error('[api error]', error);
     return res.status(500).json({
-      error: 'Something went wrong while contacting the AI. Please try again.',
+      error: 'AI service temporarily unavailable.',
     });
   }
 };
 
-// POST /api/debate/start — starts a debate and returns the AI opening statement.
+// POST /api/debate/start
 router.post('/start', handle(async (body) => startDebate(body)));
 
-// POST /api/debate/message — sends the user's latest argument, returns a counterargument.
+// POST /api/debate/message
 router.post('/message', handle(async (body) => sendDebateMessage(body)));
 
-// POST /api/debate/analyze — analyzes the user's latest argument.
+// POST /api/debate/analyze
 router.post('/analyze', handle(async (body) => analyzeDebateArgument(body)));
 
-// POST /api/debate/evaluate — evaluates the complete debate.
+// POST /api/debate/evaluate
 router.post('/evaluate', handle(async (body) => evaluateDebateTurn(body)));
 
 export default router;
