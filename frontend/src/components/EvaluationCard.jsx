@@ -12,22 +12,28 @@ const WINNER_STYLES = {
 export default function EvaluationCard({ evaluation, saved, onSave, onNewDebate, onHome }) {
   const {
     overallScore,
-    scores,
+    scores = {},
     winner,
     explanation,
+    strengths = [],
+    weaknesses = [],
     strongestArgument,
     weakestArgument,
-    improvementTips,
+    aiStrongestCounter,
+    logicalFallacies,
+    improvementTips = [],
   } = evaluation;
 
   const categories = [
-    ['Argument Quality', scores.argumentQuality],
-    ['Logical Reasoning', scores.logicalReasoning],
-    ['Evidence', scores.evidence],
-    ['Rebuttal Quality', scores.rebuttalQuality],
-    ['Consistency', scores.consistency],
-    ['Persuasiveness', scores.persuasiveness],
+    ['Argument Quality', scores.argumentQuality ?? 50],
+    ['Logical Reasoning', scores.logicalReasoning ?? 50],
+    ['Evidence', scores.evidence ?? 50],
+    ['Rebuttal Quality', scores.rebuttalQuality ?? 50],
+    ['Consistency', scores.consistency ?? 50],
+    ['Persuasiveness', scores.persuasiveness ?? 50],
   ];
+
+  const fallaciesText = logicalFallacies || 'No clear logical fallacy detected.';
 
   return (
     <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
@@ -39,7 +45,9 @@ export default function EvaluationCard({ evaluation, saved, onSave, onNewDebate,
           <h2 className="text-lg font-bold text-slate-900">Debate Results</h2>
         </div>
         <span
-          className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${WINNER_STYLES[winner] || WINNER_STYLES.tie}`}
+          className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${
+            WINNER_STYLES[winner] || WINNER_STYLES.tie
+          }`}
         >
           {WINNER_LABELS[winner] || WINNER_LABELS.tie}
         </span>
@@ -60,25 +68,79 @@ export default function EvaluationCard({ evaluation, saved, onSave, onNewDebate,
         </div>
       </div>
 
-      <div className="mt-5 space-y-3 text-sm leading-relaxed text-slate-700">
-        <p className="break-words rounded-xl bg-slate-50 p-3">{explanation || 'The AI did not provide an explanation.'}</p>
-        <p className="break-words">
-          <span className="font-semibold text-slate-800">Strongest argument: </span>
-          {strongestArgument || '—'}
-        </p>
-        <p className="break-words">
-          <span className="font-semibold text-slate-800">Weakest argument: </span>
-          {weakestArgument || '—'}
-        </p>
-        <div>
-          <p className="font-semibold text-slate-800">Improvement tips</p>
-          <ul className="mt-1 space-y-1">
+      <div className="mt-6 space-y-4 text-sm leading-relaxed text-slate-700">
+        <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200/60">
+          <p className="font-bold text-slate-900">Summary Verdict</p>
+          <p className="mt-1 break-words">{explanation || 'No summary verdict provided.'}</p>
+        </div>
+
+        {/* Strengths & Weaknesses */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl bg-emerald-50/50 p-4 ring-1 ring-emerald-100">
+            <p className="font-bold text-emerald-900">Strengths</p>
+            {strengths.length > 0 ? (
+              <ul className="mt-2 space-y-1.5 text-emerald-800">
+                {strengths.map((item, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="mt-0.5 shrink-0 text-emerald-600">•</span>
+                    <span className="break-words">{item}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-emerald-700">—</p>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-amber-50/50 p-4 ring-1 ring-amber-100">
+            <p className="font-bold text-amber-900">Weaknesses</p>
+            {weaknesses.length > 0 ? (
+              <ul className="mt-2 space-y-1.5 text-amber-800">
+                {weaknesses.map((item, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="mt-0.5 shrink-0 text-amber-600">•</span>
+                    <span className="break-words">{item}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-amber-700">—</p>
+            )}
+          </div>
+        </div>
+
+        {/* Arguments analysis */}
+        <div className="space-y-3 rounded-xl bg-white p-4 ring-1 ring-slate-200">
+          <div>
+            <p className="font-bold text-slate-800">Strongest Argument</p>
+            <p className="mt-0.5 break-words text-slate-600">{strongestArgument || '—'}</p>
+          </div>
+          <div>
+            <p className="font-bold text-slate-800">Weakest Argument</p>
+            <p className="mt-0.5 break-words text-slate-600">{weakestArgument || '—'}</p>
+          </div>
+          {aiStrongestCounter && (
+            <div>
+              <p className="font-bold text-slate-800">AI's Strongest Counterargument</p>
+              <p className="mt-0.5 break-words text-slate-600">{aiStrongestCounter}</p>
+            </div>
+          )}
+          <div>
+            <p className="font-bold text-slate-800">Logical Fallacies</p>
+            <p className="mt-0.5 break-words text-slate-600">{fallaciesText}</p>
+          </div>
+        </div>
+
+        {/* How to Improve */}
+        <div className="rounded-xl bg-blue-50/50 p-4 ring-1 ring-blue-100">
+          <p className="font-bold text-blue-900">How to Improve</p>
+          <ul className="mt-2 space-y-1.5">
             {improvementTips.map((tip, index) => (
-              <li key={index} className="flex gap-2">
-                <span className="mt-0.5 text-blue-600">
+              <li key={index} className="flex gap-2 text-slate-700">
+                <span className="mt-0.5 shrink-0 text-blue-600">
                   <CheckIcon className="h-4 w-4" />
                 </span>
-                <span>{tip}</span>
+                <span className="break-words">{tip}</span>
               </li>
             ))}
           </ul>
@@ -90,7 +152,7 @@ export default function EvaluationCard({ evaluation, saved, onSave, onNewDebate,
       </p>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button onClick={onSave} disabled={saved} loading={false}>
+        <Button onClick={onSave} disabled={saved}>
           {saved ? (
             <>
               <CheckIcon className="h-4 w-4" /> Saved to History

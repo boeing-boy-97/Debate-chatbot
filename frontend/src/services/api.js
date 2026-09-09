@@ -1,4 +1,4 @@
-// All backend calls go through here so UI components never talk to the API directly.
+// Backend API client for frontend.
 
 const BASE = '/api/debate';
 
@@ -17,12 +17,12 @@ function friendlyMessage(status, serverError) {
       'to "frontend" and redeploy, then check that /api/health returns JSON.'
     );
   }
-  if (status === 503) return 'AI service is not configured.';
+  if (status === 503) return 'AI service temporarily unavailable.';
   if (status === 429) {
     return 'You have reached the AI rate limit. Please wait a moment and then try again.';
   }
-  if (status === 400) return 'Something is missing. Please check your input and try again.';
-  return 'Something went wrong while contacting the AI. Please try again.';
+  if (status === 400) return 'Please check your input and try again.';
+  return 'AI service temporarily unavailable.';
 }
 
 function codeFor(status) {
@@ -47,10 +47,6 @@ async function post(path, body) {
     );
   }
 
-  // Read the raw text first so a misrouted API (HTML 404 page or index.html
-  // instead of JSON — the classic symptom of a wrong Vercel Root Directory or
-  // a failed function deployment) becomes a clear error instead of a crash
-  // when the caller reads fields off a null response.
   let text = '';
   try {
     text = await response.text();
@@ -74,20 +70,14 @@ async function post(path, body) {
   }
   if (!data || typeof data !== 'object') {
     throw new ApiError(
-      'The debate API did not return a valid response. If this is a Vercel deployment, ' +
-        'make sure the Root Directory is "frontend", redeploy, and check that /api/health returns JSON.',
+      'The debate API did not return a valid response. Please check your deployment settings.',
       'bad-response'
     );
   }
   return data;
 }
 
-/**
- * Deployment health check. Returns e.g.
- * { status: 'ok', configured: true, model: 'gpt-4o-mini', offlineFallback: 'on' }.
- * Throws an ApiError with code 'api-missing' when the API routes are not
- * deployed at all (the page HTML is served instead of JSON).
- */
+/** Deployment health check. */
 export async function getHealth() {
   let response;
   try {
@@ -106,27 +96,18 @@ export async function getHealth() {
   }
   if (response.status === 404 || !data || data.status !== 'ok') {
     throw new ApiError(
-      'Debate API not found. If this is a Vercel deployment, set the Root Directory ' +
-        'to "frontend" and redeploy.',
+      'Debate API not found. If this is a Vercel deployment, set the Root Directory to "frontend" and redeploy.',
       'api-missing'
     );
   }
   return data;
 }
 
-/** Starts a debate; returns the AI's opening statement. */
 export function startDebate({ topic, userPosition, difficulty }) {
   return post('/start', { topic, userPosition, difficulty });
 }
 
-/** Sends the user's argument and returns the AI counterargument. */
-export function sendMessage({
-  topic,
-  userPosition,
-  aiPosition,
-  difficulty,
-  conversation,
-}) {
+export function sendMessage({ topic, userPosition, aiPosition, difficulty, conversation }) {
   return post('/message', {
     topic,
     userPosition,
@@ -136,7 +117,6 @@ export function sendMessage({
   });
 }
 
-/** Analyzes the user's latest argument. */
 export function analyzeArgument({ topic, userPosition, difficulty, argument, lastAiResponse }) {
   return post('/analyze', {
     topic,
@@ -147,14 +127,7 @@ export function analyzeArgument({ topic, userPosition, difficulty, argument, las
   });
 }
 
-/** Evaluates the complete debate. */
-export function evaluateDebate({
-  topic,
-  userPosition,
-  aiPosition,
-  difficulty,
-  conversation,
-}) {
+export function evaluateDebate({ topic, userPosition, aiPosition, difficulty, conversation }) {
   return post('/evaluate', {
     topic,
     userPosition,

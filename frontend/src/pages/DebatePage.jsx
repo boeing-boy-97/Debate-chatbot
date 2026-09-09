@@ -18,6 +18,7 @@ import {
 import * as api from '../services/api.js';
 import { saveDebate, updateDebate } from '../services/history.js';
 import uid from '../services/uid.js';
+import { validateDebateArgument } from '../services/validateArgument.js';
 
 /** Plain-text version of an AI message (with or without structured sections). */
 function aiText(message) {
@@ -53,7 +54,8 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   const [messages, setMessages] = useState(() => withIds(initialMessages));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState(null); // used by the Retry button
+  const [starting, setStarting] = useState(false);
+  const [pending, setPending] = useState(null);
   const [analyzingId, setAnalyzingId] = useState(null);
   const [evaluating, setEvaluating] = useState(false);
   const [evaluation, setEvaluation] = useState(debate.initialEvaluation || null);
@@ -65,7 +67,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   const [offlineMode, setOfflineMode] = useState(false);
 
   function showError(error) {
-    setApiError(error?.message || 'Something went wrong. Please try again.');
+    setApiError(error?.message || 'AI service temporarily unavailable.');
     setApiErrorCode(error?.code || '');
   }
 
@@ -74,7 +76,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     setApiErrorCode('');
   }
 
-  const started = useRef(false);
+  const startInFlightRef = useRef(false);
   const scrollRef = useRef(null);
 
   const hasUserArguments = useMemo(
@@ -82,21 +84,23 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     [messages]
   );
 
-  // Auto-start the debate when the page opens without a saved conversation.
+  // Auto-start debate exactly once on mount if no messages exist
   useEffect(() => {
-    if (started.current || initialMessages?.length) return;
-    started.current = true;
+    if (startInFlightRef.current || initialMessages?.length) return;
+    startInFlightRef.current = true;
     runStart();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the newest message in view.
+  // Scroll to bottom when messages update
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, busy, evaluating, evaluation]);
+  }, [messages, busy, starting, evaluating, evaluation]);
 
   async function runStart() {
+    if (busy || starting) return;
+    setStarting(true);
     setBusy(true);
     clearError();
     try {
@@ -110,13 +114,17 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       setMessages([]);
     } finally {
       setBusy(false);
+      setStarting(false);
+      startInFlightRef.current = false;
     }
   }
 
   async function sendArgument() {
+    if (busy || evaluating || ended) return;
     const value = input.trim();
-    if (!value) {
-      setInputError('Please enter an argument first.');
+    const argCheck = validateDebateArgument(value);
+    if (!argCheck.valid) {
+      setInputError(argCheck.reason);
       return;
     }
     setInputError('');
@@ -144,6 +152,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   }
 
   async function retrySend() {
+    if (busy || evaluating) return;
     clearError();
     setBusy(true);
     try {
@@ -165,6 +174,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   }
 
   function doAnalyze(userMessage, aiMessage) {
+    if (busy || evaluating) return;
     clearError();
     setAnalyzingId(aiMessage.id);
     return api
@@ -191,6 +201,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
 
   /** Get a score for the debate; pass final=true to finish the debate. */
   async function runEvaluate(final = false) {
+    if (busy || evaluating) return;
     if (!hasUserArguments) {
       showError({ message: 'Send at least one argument before scoring the debate.' });
       return;
@@ -225,6 +236,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
     setSaved(false);
     clearError();
     setPending(null);
+    startInFlightRef.current = false;
     runStart();
   }
 
@@ -239,7 +251,6 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       messages,
       evaluation,
     };
-    // Update the entry when resuming from history; otherwise create a new one.
     if (!updateDebate(debate.id, entry)) {
       saveDebate(entry);
     }
@@ -248,21 +259,21 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
   }
 
   function retry() {
-    if (!pending) return;
+    if (!pending || busy || evaluating) return;
     if (pending.type === 'start') return runStart();
     if (pending.type === 'send') return retrySend();
     if (pending.type === 'analyze') return doAnalyze(pending.userMessage, pending.aiMessage);
     if (pending.type === 'evaluate') return runEvaluate(pending.final);
   }
 
-  const busyOrEvaluating = busy || evaluating;
+  const busyOrEvaluating = busy || starting || evaluating;
   const controlsDisabled = busyOrEvaluating || ended;
   const isUnconfigured =
     apiErrorCode === 'unconfigured' || apiError === 'AI service is not configured.';
   const isApiDown = ['api-missing', 'bad-response', 'network'].includes(apiErrorCode);
 
   return (
-    <div className="mx-auto flex h-dvh w-full max-w-3xl flex-col px-3 py-3 sm:px-4">
+    <div className="mx-auto flex h-dvh w-full max-w-3xl flex-col overflow-x-hidden px-3 py-3 sm:px-4">
       {/* Header */}
       <header className="rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200 sm:px-5">
         <div className="flex items-center gap-3">
@@ -297,11 +308,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       {offlineMode && (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-amber-200">
           <BoltIcon className="h-3.5 w-3.5 shrink-0" />
-          <span>
-            <span className="font-bold">Offline replies</span> — the AI service isn't reachable
-            right now, so responses are generated locally on this device. Set an OpenAI key and a
-            network connection to enable live AI debate.
-          </span>
+          <span>AI service temporarily unavailable. Using local fallback mode.</span>
         </div>
       )}
 
@@ -310,10 +317,14 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         ref={scrollRef}
         className="nice-scroll mt-3 flex-1 space-y-5 overflow-y-auto rounded-2xl bg-slate-100 p-4 ring-1 ring-slate-200 sm:p-5"
       >
-        {messages.length === 0 && !busy && !apiError && (
+        {messages.length === 0 && !starting && !busy && !apiError && (
           <div className="flex flex-1 flex-col items-center justify-center pt-6 text-center">
             <p className="text-sm text-slate-500">The debate will begin shortly…</p>
           </div>
+        )}
+
+        {starting && messages.length === 0 && (
+          <ThinkingIndicator label="Starting debate..." />
         )}
 
         {apiError && isUnconfigured && (
@@ -326,17 +337,8 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
             </span>
             <h2 className="mt-3 text-lg font-bold text-slate-900">AI service is not set up</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              This app needs an OpenAI API key to debate. Set the{' '}
-              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">
-                OPENAI_API_KEY
-              </code>{' '}
-              environment variable — locally that&apos;s{' '}
-              <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend/server/.env</code>;
-              on Vercel it&apos;s Project Settings → Environment Variables (Production).{' '}
-              <span className="font-medium">
-                If you just added the key on Vercel, you must redeploy
-              </span>{' '}
-              — environment changes only take effect on a new deployment.
+              This app needs an OpenAI API key to debate. Set the OPENAI_API_KEY environment variable.
+              If you just added the key on Vercel, you must redeploy.
             </p>
             <div className="mt-4 flex justify-center gap-2">
               {pending && (
@@ -364,23 +366,8 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
               Can&apos;t reach the debate API
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              The opening statement, replies and scoring all need the backend API, and it
-              didn&apos;t answer. Please check:
+              The opening statement, replies and scoring all need the backend API. Check your network or Vercel Root Directory configuration.
             </p>
-            <ul className="mx-auto mt-3 max-w-sm list-disc space-y-1 pl-5 text-left text-sm text-slate-600">
-              <li>Your internet connection.</li>
-              <li>
-                On Vercel, the project&apos;s <span className="font-medium">Root Directory</span>{' '}
-                is <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">frontend</code>.
-              </li>
-              <li>Redeploy after changing any setting or environment variable.</li>
-              <li>
-                Open <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">/api/health</code> on
-                your deployment — it should return JSON like{' '}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-700">{'{"status":"ok"}'}</code>.
-              </li>
-            </ul>
-            <p className="mt-3 break-words text-xs text-slate-400">{apiError}</p>
             <div className="mt-4 flex justify-center gap-2">
               {pending && (
                 <Button size="sm" onClick={retry}>
@@ -398,10 +385,10 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
         {apiError && !isUnconfigured && !isApiDown && (
           <div
             role="alert"
-            className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 ring-1 ring-red-200"
           >
-            <span className="flex items-start gap-2 text-sm text-red-700">
-              <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="flex items-center gap-2 text-sm font-medium text-red-700">
+              <AlertIcon className="h-4 w-4 shrink-0" />
               {apiError}
             </span>
             {pending && (
@@ -431,7 +418,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
           );
         })}
 
-        {busy && !evaluating && <ThinkingIndicator label="AI is thinking..." />}
+        {busy && !starting && !evaluating && <ThinkingIndicator label="AI is thinking..." />}
         {evaluating && <ThinkingIndicator label="Evaluating debate..." />}
 
         {evaluation && (
@@ -451,7 +438,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
       <div className="mt-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
         {ended && (
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 ring-1 ring-blue-100">
-            <span>Debate ended — review your results below.</span>
+            <span>Debate ended — review your final report below.</span>
             <Button variant="ghost" size="sm" onClick={() => setEnded(false)}>
               Resume Debate
             </Button>
@@ -463,7 +450,9 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
             {inputError}
           </p>
         )}
-        <div className="flex items-end gap-2">
+
+        {/* Input & Send area: stacked on mobile, row on sm+ */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <textarea
             rows={2}
             value={input}
@@ -484,11 +473,11 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
           <Button
             onClick={sendArgument}
             disabled={controlsDisabled}
-            loading={busy}
-            className="shrink-0"
+            loading={busy && !starting && !evaluating}
+            className="w-full shrink-0 justify-center sm:w-auto"
           >
             <SendIcon className="h-4 w-4" />
-            <span className="hidden sm:inline">Send</span>
+            <span>Send</span>
           </Button>
         </div>
 
@@ -527,8 +516,7 @@ export default function DebatePage({ debate, onHome, onRestart, onHistoryChanged
 
         <p className="mt-3 text-xs text-slate-400">
           Press <span className="font-medium">Debate Score</span> anytime for a provisional score,
-          or <span className="font-medium">End Debate</span> when you finish for the final
-          evaluation.
+          or <span className="font-medium">End Debate</span> when you finish for the final evaluation.
         </p>
       </div>
     </div>

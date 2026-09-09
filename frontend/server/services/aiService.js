@@ -1,3 +1,4 @@
+import OpenAI from 'openai';
 import * as offline from './offlineEngine.js';
 import {
   cleanApiKey,
@@ -6,6 +7,7 @@ import {
   getBaseUrl,
   isOfflineFallbackEnabled,
 } from './publicStatus.js';
+import { validateDebateArgument } from './validateArgument.js';
 
 const VALID_POSITIONS = ['for', 'against'];
 const VALID_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
@@ -23,35 +25,49 @@ export function isAiConfigured() {
   return isKeyConfigured();
 }
 
-async function getClient() {
+function getClient() {
   if (!isAiConfigured()) {
-    throw new ApiError(503, 'AI service is not configured.');
-  }
-  // The `openai` package is loaded lazily (not imported at the top of this
-  // file) on purpose: if the package ever fails to resolve inside a deployed
-  // serverless bundle, the import error becomes a catchable 502 here — so the
-  // offline fallback can still answer — instead of crashing every API route
-  // at module load.
-  let OpenAI;
-  try {
-    ({ default: OpenAI } = await import('openai'));
-  } catch (error) {
-    console.error('[ai] failed to load the OpenAI client:', error?.message || error);
     throw new ApiError(
-      502,
-      'Could not reach the AI service. Please check your connection and try again.'
+      503,
+      'AI service is not configured. OPENAI_API_KEY environment variable is required on the server.'
     );
   }
   const baseURL = getBaseUrl();
   return new OpenAI({
     apiKey: cleanApiKey(),
     baseURL: baseURL || undefined,
-    // Keep the total worst-case time (timeout + 1 retry + backoff, ~45s) below
-    // the 60s Vercel serverless function limit, so a slow request still returns
-    // a friendly error (or offline fallback) instead of a platform 504.
-    timeout: 20000,
+    timeout: 25000,
     maxRetries: 1,
   });
+}
+
+function wrapAiError(error) {
+  if (error instanceof ApiError) {
+    return error;
+  }
+  console.error('[ai error]', error?.message || error);
+  if (error?.status === 401 || error?.status === 403) {
+    return new ApiError(503, 'AI service is not configured properly.');
+  }
+  if (error?.status === 429) {
+    return new ApiError(
+      429,
+      'You have reached the AI rate limit. Please wait a moment and then try again.'
+    );
+  }
+  if (error?.status === 404) {
+    return new ApiError(
+      502,
+      'The configured AI model was not found. Please check OPENAI_MODEL setting.'
+    );
+  }
+  if (error?.status === 400) {
+    return new ApiError(
+      400,
+      error?.message || 'The AI request was invalid.'
+    );
+  }
+  return new ApiError(503, 'AI service temporarily unavailable.');
 }
 
 /* ----------------------------- validation ----------------------------- */
@@ -96,11 +112,6 @@ function normalizeConversation(value) {
     .map((m) => ({ role: m.role, content: m.content.trim().slice(0, 3000) }));
 }
 
-/**
- * Payload validation shared by the online AND offline paths.
- * This must run before choosing a path, so invalid input is always rejected
- * with a 400 — never silently "answered" by the offline demo engine.
- */
 function validateStartPayload(payload) {
   return {
     topic: requireString(payload?.topic, 'Topic', { max: 300 }),
@@ -118,16 +129,30 @@ function validateMessagePayload(payload) {
   if (!history.length || history[history.length - 1].role !== 'user') {
     throw new ApiError(400, 'Send your argument first.');
   }
+
+  const latestUserMsg = history[history.length - 1].content;
+  const argCheck = validateDebateArgument(latestUserMsg);
+  if (!argCheck.valid) {
+    throw new ApiError(400, argCheck.reason);
+  }
+
   return { ...clean, conversation: history };
 }
 
 function validateAnalyzePayload(payload) {
-  return {
+  const clean = {
     ...validateStartPayload(payload),
     argument: requireString(payload?.argument, 'Argument', { max: 3000 }),
     lastAiResponse:
       typeof payload?.lastAiResponse === 'string' ? payload.lastAiResponse.slice(0, 2000) : '',
   };
+
+  const argCheck = validateDebateArgument(clean.argument);
+  if (!argCheck.valid) {
+    throw new ApiError(400, argCheck.reason);
+  }
+
+  return clean;
 }
 
 function validateEvaluatePayload(payload) {
@@ -148,29 +173,23 @@ function validateEvaluatePayload(payload) {
 /* --------------------------- prompt building --------------------------- */
 
 const DEBATE_RULES = `Rules:
-1. Stay focused on the debate topic.
-2. Remember previous arguments and build on them.
-3. Directly address the user's latest argument first.
-4. Give logical counterarguments.
-5. Identify assumptions, contradictions, missing evidence, and weak reasoning.
-6. Do not simply agree with the user.
-7. Do not repeat the same argument you already made.
-8. Ask a challenging question when appropriate.
-9. Use clear and understandable language.
-10. Do not invent statistics or sources.
-11. If a factual claim requires evidence, clearly say that evidence is needed.
-12. Adjust the depth and vocabulary to the selected difficulty level.
-13. Keep responses concise enough for a natural debate (the "why" section should be 2–4 sentences).
-14. Never insult the user.
-15. Remain respectful and professional.`;
+1. Stay strictly focused on the debate topic.
+2. Maintain your assigned position consistently — NEVER switch sides or agree with the user's position.
+3. Address the specific logic, claims, and assumptions in the user's latest argument.
+4. Point out logical flaws, unstated assumptions, missing evidence, or counterexamples.
+5. Provide strong counterarguments supporting your assigned side.
+6. Ask a specific, thought-provoking challenge question directly related to the user's actual argument (NEVER generic questions like "give evidence").
+7. Do not repeat arguments or phrasing you already used earlier in the debate.
+8. Attack the argument, NEVER the person.
+9. Adjust depth according to difficulty level.`;
 
 const DIFFICULTY_DESCRIPTIONS = {
   beginner:
-    'BEGINNER: use simple words and short sentences, one clear argument at a time, and explain concepts briefly.',
+    'BEGINNER DIFFICULTY: Use accessible, simple language. Highlight one clear weakness in the user argument and ask one direct challenge question.',
   intermediate:
-    'INTERMEDIATE: use everyday language with solid reasoning and one concrete challenge per turn.',
+    'INTERMEDIATE DIFFICULTY: Use solid, everyday logic with well-structured counterarguments. Challenge underlying assumptions directly.',
   advanced:
-    'ADVANCED: use rigorous logic, precise terminology, and deep, multi-layered challenges. Raise the strongest objections.',
+    'ADVANCED DIFFICULTY: Use rigorous logic, precise terminology, and multi-layered challenges. Raise philosophical or empirical counterexamples and attack subtle fallacies.',
 };
 
 function positionLabel(position) {
@@ -178,11 +197,13 @@ function positionLabel(position) {
 }
 
 function buildDebateSystemPrompt(topic, userPosition, aiPosition, difficulty, extra) {
-  return `You are an intelligent debate opponent called "AI Opponent".
+  return `You are an expert, professional debate opponent in an educational debate application.
 
 The debate topic is: "${topic}"
-The user has chosen the ${positionLabel(userPosition)} side.
-You must argue the ${positionLabel(aiPosition)} side — the direct opposite of the user.
+The user is arguing: ${positionLabel(userPosition)}
+You MUST argue: ${positionLabel(aiPosition)} — the direct opposite side.
+
+CRITICAL INSTRUCTION: You must strictly defend the ${positionLabel(aiPosition)} side throughout the entire debate. You must NEVER agree with the user's overall stance or switch to the ${positionLabel(userPosition)} position.
 
 ${DEBATE_RULES}
 
@@ -201,24 +222,24 @@ function conversationBlock(conversation) {
 /* --------------------------- JSON handling --------------------------- */
 
 function extractJson(text) {
-  let clean = String(text).trim();
-  const fenced = clean.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced) clean = fenced[1].trim();
-  const start = clean.indexOf('{');
-  const end = clean.lastIndexOf('}');
+  let cleanStr = String(text).trim();
+  const fenced = cleanStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) cleanStr = fenced[1].trim();
+  const start = cleanStr.indexOf('{');
+  const end = cleanStr.lastIndexOf('}');
   if (start === -1 || end <= start) {
     throw new Error('Model did not return valid JSON.');
   }
-  return JSON.parse(clean.slice(start, end + 1));
+  return JSON.parse(cleanStr.slice(start, end + 1));
 }
 
 async function complete(messages, { json = false } = {}) {
-  const client = await getClient();
+  const client = getClient();
   const request = {
     model: getModelName(),
     messages,
     temperature: 0.7,
-    max_tokens: 900,
+    max_tokens: 1000,
   };
   if (json) {
     request.response_format = { type: 'json_object' };
@@ -228,8 +249,6 @@ async function complete(messages, { json = false } = {}) {
     try {
       completion = await client.chat.completions.create(request);
     } catch (error) {
-      // Some OpenAI-compatible providers do not support response_format; retry
-      // once without it, keeping the strict JSON instruction in the prompt.
       if (json && error?.status === 400) {
         completion = await client.chat.completions.create({
           ...request,
@@ -239,45 +258,9 @@ async function complete(messages, { json = false } = {}) {
         throw error;
       }
     }
-    return completion.choices[0].message.content || '';
+    return completion.choices[0]?.message?.content || '';
   } catch (error) {
-    // Invalid / missing key.
-    if (error?.status === 401 || error?.status === 403) {
-      throw new ApiError(503, 'AI service is not configured.');
-    }
-    // Out of quota or hitting provider rate limits.
-    if (error?.status === 429) {
-      throw new ApiError(
-        429,
-        'You have reached the AI rate limit. Please wait a moment and then try again.'
-      );
-    }
-    // Unknown model (e.g. a typo in OPENAI_MODEL, or a model the key cannot
-    // access). Use 502 — never 400 — so the offline fallback can still answer.
-    if (error?.status === 404) {
-      throw new ApiError(
-        502,
-        'The configured AI model was not found. Check the OPENAI_MODEL setting and try again.'
-      );
-    }
-    // The provider rejected the request (e.g. a misconfigured proxy base URL).
-    // Again 502, so a client validation error (400) stays distinct from a
-    // provider failure and the offline fallback still applies.
-    if (error?.status === 400) {
-      throw new ApiError(
-        502,
-        'The AI service rejected the request. Please try again in a moment.'
-      );
-    }
-    // No HTTP status means a transport/connectivity problem (DNS, TLS, reset,
-    // timeout), not a real answer from the model.
-    if (!error?.status) {
-      throw new ApiError(
-        502,
-        'Could not reach the AI service. Please check your connection and try again.'
-      );
-    }
-    throw error;
+    throw wrapAiError(error);
   }
 }
 
@@ -286,7 +269,7 @@ async function completeJson(messages) {
   return extractJson(raw);
 }
 
-function clampScore(value, { min = 0, max = 100, fallback = 0 } = {}) {
+function clampScore(value, { min = 0, max = 100, fallback = 50 } = {}) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return Math.max(min, Math.min(max, Math.round(num)));
@@ -301,10 +284,15 @@ export async function generateOpening({ topic, userPosition, difficulty }) {
   const level = normalizeDifficulty(difficulty);
   const aiPosition = position === 'for' ? 'against' : 'for';
 
-  const system = buildDebateSystemPrompt(cleanTopic, position, aiPosition, level, `
-The debate is just beginning. Make a short opening statement (2–4 sentences) that frames the
-${positionLabel(aiPosition)} side and sets up one key challenge for the user. Do NOT use JSON —
-return plain text only.`);
+  const system = buildDebateSystemPrompt(
+    cleanTopic,
+    position,
+    aiPosition,
+    level,
+    `The debate is just beginning. Make a concise opening statement (2–4 sentences) framing the ${positionLabel(
+      aiPosition
+    )} side and setting up one specific key challenge for the user. Do NOT return JSON — plain text only.`
+  );
 
   const content = await complete([
     { role: 'system', content: system },
@@ -312,7 +300,7 @@ return plain text only.`);
   ]);
 
   if (!content.trim()) {
-    throw new Error('Empty AI response.');
+    throw new ApiError(503, 'AI service temporarily unavailable.');
   }
   return content.trim();
 }
@@ -335,21 +323,35 @@ export async function generateCounterargument({
     throw new ApiError(400, 'Send your argument first.');
   }
 
-  const system = buildDebateSystemPrompt(cleanTopic, position, aiPos, level, `
-Reply to the user's LATEST argument. Build on, and do not repeat, anything you already said.
+  const system = buildDebateSystemPrompt(
+    cleanTopic,
+    position,
+    aiPos,
+    level,
+    `Reply to the user's LATEST argument. Analyze their specific claim and present a strong rebuttal supporting ${positionLabel(
+      aiPos
+    )}.
+
+CRITICAL:
+1. "counterargument": 1-2 sentences presenting the core counterargument supporting ${positionLabel(aiPos)}.
+2. "why": 2-4 sentences explaining the reasoning, pointing out specific flaws, assumptions, or counterexamples to the user's argument.
+3. "challenge": 1 specific, targeted question directly challenging the user's claim or premises (NEVER generic questions like "give evidence").
 
 Return ONLY valid JSON with exactly these keys:
 {
-  "counterargument": "The main counterargument — 1–2 sentences.",
-  "why": "The reasoning behind it — 2–4 sentences.",
-  "challenge": "One question or challenge for the user."
-}`);
+  "counterargument": "...",
+  "why": "...",
+  "challenge": "..."
+}`
+  );
 
   const data = await completeJson([
     { role: 'system', content: system },
     {
       role: 'user',
-      content: `The debate conversation so far (the last message is the user's newest argument):\n\n${conversationBlock(history)}`,
+      content: `Debate transcript so far (last message is user's newest argument):\n\n${conversationBlock(
+        history
+      )}`,
     },
   ]);
 
@@ -358,7 +360,7 @@ Return ONLY valid JSON with exactly these keys:
   const challenge = String(data.challenge || '').trim();
 
   if (!counterargument && !why && !challenge) {
-    throw new Error('Empty AI response.');
+    throw new ApiError(503, 'AI service temporarily unavailable.');
   }
   return { counterargument, why, challenge };
 }
@@ -376,18 +378,27 @@ export async function analyzeArgument({
   const level = normalizeDifficulty(difficulty);
   const cleanArgument = requireString(argument, 'Argument', { max: 3000 });
 
-  const system = `You are an honest, constructive debate coach — not a debater.
-The debate topic is: "${cleanTopic}"
-The user is arguing the ${positionLabel(position)} side at ${level.toUpperCase()} difficulty.
-Analyze ONLY the user's argument below. Be specific, fair, and practical.
+  const system = `You are an expert, objective debate coach.
+Topic: "${cleanTopic}"
+User side: ${positionLabel(position)}
+Difficulty: ${level.toUpperCase()}
 
-Return ONLY valid JSON with exactly these keys:
+Analyze ONLY the user's latest argument below. Be thorough, constructive, and fair.
+
+Identify if any logical fallacies are present (e.g. Hasty Generalization, Strawman, Ad Hominem, False Dilemma, Slippery Slope, Circular Reasoning, Appeal to Authority, Appeal to Emotion, Red Herring).
+CRITICAL: Do NOT invent a fallacy if none exists! If no clear logical fallacy exists, you MUST set "logicalFallacies" to "No clear logical fallacy detected."
+
+Return ONLY valid JSON with these keys:
 {
   "score": <integer 1-10>,
-  "logic": "Whether the reasoning is logically strong and why.",
-  "evidence": "What evidence is missing or whether the claims are supported.",
-  "weakness": "The weakest part of the argument.",
-  "improvement": "A better version of the argument."
+  "argumentStrength": <integer 0-100>,
+  "logic": "Analysis of logical structure and coherence.",
+  "evidenceQuality": "Evaluation of claims and whether concrete evidence or examples are provided.",
+  "relevance": "How directly relevant the claim is to the topic.",
+  "clarity": "How clearly the argument is stated.",
+  "rebuttalStrength": "How well it addresses potential counterarguments.",
+  "logicalFallacies": "Description of fallacies or 'No clear logical fallacy detected.'",
+  "improvement": "Actionable, specific recommendation to improve this argument."
 }`;
 
   const data = await completeJson([
@@ -400,19 +411,32 @@ Return ONLY valid JSON with exactly these keys:
     },
   ]);
 
+  const fallaciesRaw = String(data.logicalFallacies || '').trim();
+  const logicalFallacies =
+    fallaciesRaw && !/none|no fallacy|no clear/i.test(fallaciesRaw)
+      ? fallaciesRaw
+      : 'No clear logical fallacy detected.';
+
   return {
-    score: clampScore(data.score, { min: 1, max: 10, fallback: 5 }),
-    logic: String(data.logic || 'The argument could be strengthened with clearer reasoning.').trim(),
-    evidence:
-      String(data.evidence || 'The argument relies on assumptions rather than evidence.').trim(),
-    weakness: String(data.weakness || 'The weakest point is not clearly defined.').trim(),
+    score: clampScore(data.score, { min: 1, max: 10, fallback: 7 }),
+    argumentStrength: clampScore(data.argumentStrength, { min: 0, max: 100, fallback: 70 }),
+    logic: String(data.logic || 'The argument presents a clear position.').trim(),
+    evidenceQuality: String(
+      data.evidenceQuality || 'The argument could be strengthened with concrete evidence.'
+    ).trim(),
+    relevance: String(data.relevance || 'Relevant to the topic.').trim(),
+    clarity: String(data.clarity || 'Clear and concise statement.').trim(),
+    rebuttalStrength: String(
+      data.rebuttalStrength || 'Weak point is not anticipating counterarguments.'
+    ).trim(),
+    logicalFallacies,
     improvement: String(
-      data.improvement || 'Provide concrete evidence and address the strongest counterargument.'
+      data.improvement || 'Provide concrete examples and address key counterarguments.'
     ).trim(),
   };
 }
 
-/** Final evaluation of the whole debate. */
+/** Evaluation of the debate (provisional or final report). */
 export async function evaluateDebate({
   topic,
   userPosition,
@@ -427,17 +451,19 @@ export async function evaluateDebate({
   const history = normalizeConversation(conversation);
 
   if (!history.some((m) => m.role === 'user')) {
-    throw new ApiError(400, 'There is not enough debate to evaluate yet. Send at least one argument first.');
+    throw new ApiError(
+      400,
+      'There is not enough debate to evaluate yet. Send at least one argument first.'
+    );
   }
 
-  const system = `You are an impartial debate judge evaluating the full debate below.
+  const system = `You are an impartial, professional debate judge evaluating the complete debate transcript below.
 Topic: "${cleanTopic}"
-User is arguing ${positionLabel(position)}; the AI opponent is arguing ${positionLabel(aiPos)}.
-Difficulty: ${level.toUpperCase()}.
+User Position: ${positionLabel(position)}
+AI Opponent Position: ${positionLabel(aiPos)}
+Difficulty: ${level.toUpperCase()}
 
-Judge on logic, evidence, relevance, counterarguments, consistency, and persuasiveness.
-Never decide a winner by counting who sent more messages. Give an honest, balanced verdict and
-remember this is your evaluation, not an objective truth.
+Evaluate strictly based on what actually occurred in the transcript. Do NOT invent facts or arguments that were not made.
 
 Return ONLY valid JSON with exactly these keys:
 {
@@ -453,10 +479,14 @@ Return ONLY valid JSON with exactly these keys:
     "persuasiveness": <integer 0-100>
   },
   "winner": "user" | "ai" | "tie",
-  "explanation": "A short explanation of the verdict, 2–4 sentences.",
-  "strongestArgument": "The strongest argument made by the user.",
-  "weakestArgument": "The weakest argument made by the user.",
-  "improvementTips": ["tip 1", "tip 2", "tip 3"]
+  "explanation": "Detailed 2-4 sentence judge verdict.",
+  "strengths": ["Key strength 1", "Key strength 2"],
+  "weaknesses": ["Key weakness 1", "Key weakness 2"],
+  "strongestArgument": "Quote or summary of the user's best argument in this debate.",
+  "weakestArgument": "Quote or summary of the user's weakest argument in this debate.",
+  "aiStrongestCounter": "Quote or summary of the AI opponent's strongest counterargument.",
+  "logicalFallacies": "Description of any logical fallacies committed during the debate, or 'No clear logical fallacy detected.'",
+  "improvementTips": ["Actionable tip 1", "Actionable tip 2", "Actionable tip 3"]
 }`;
 
   const data = await completeJson([
@@ -469,32 +499,57 @@ Return ONLY valid JSON with exactly these keys:
   const winner = ['user', 'ai'].includes(winnerValue)
     ? winnerValue
     : winnerValue === 'draw' || winnerValue === 'too close'
-      ? 'tie'
-      : 'tie';
+    ? 'tie'
+    : 'tie';
 
   const tips = Array.isArray(data.improvementTips)
-    ? data.improvementTips.filter((t) => String(t).trim()).slice(0, 3).map((t) => String(t).trim())
+    ? data.improvementTips
+        .filter((t) => String(t).trim())
+        .slice(0, 3)
+        .map((t) => String(t).trim())
     : [];
   while (tips.length < 3) {
-    tips.push('Back your claims with concrete evidence or clear reasoning.');
+    tips.push('Back your claims with concrete evidence and clear reasoning.');
   }
 
+  const strengths = Array.isArray(data.strengths)
+    ? data.strengths
+        .filter((s) => String(s).trim())
+        .map((s) => String(s).trim())
+    : ['Clear position stated throughout the debate.'];
+
+  const weaknesses = Array.isArray(data.weaknesses)
+    ? data.weaknesses
+        .filter((w) => String(w).trim())
+        .map((w) => String(w).trim())
+    : ['Needs more empirical evidence to back key claims.'];
+
+  const fallaciesRaw = String(data.logicalFallacies || '').trim();
+  const logicalFallacies =
+    fallaciesRaw && !/none|no fallacy|no clear/i.test(fallaciesRaw)
+      ? fallaciesRaw
+      : 'No clear logical fallacy detected.';
+
   return {
-    overallScore: clampScore(data.overallScore, { fallback: 50 }),
-    userScore: clampScore(data.userScore, { fallback: 50 }),
-    aiScore: clampScore(data.aiScore, { fallback: 50 }),
+    overallScore: clampScore(data.overallScore, { fallback: 65 }),
+    userScore: clampScore(data.userScore, { fallback: 65 }),
+    aiScore: clampScore(data.aiScore, { fallback: 65 }),
     scores: {
-      argumentQuality: clampScore(rawScores.argumentQuality, { fallback: 50 }),
-      logicalReasoning: clampScore(rawScores.logicalReasoning, { fallback: 50 }),
-      evidence: clampScore(rawScores.evidence, { fallback: 50 }),
-      rebuttalQuality: clampScore(rawScores.rebuttalQuality, { fallback: 50 }),
-      consistency: clampScore(rawScores.consistency, { fallback: 50 }),
-      persuasiveness: clampScore(rawScores.persuasiveness, { fallback: 50 }),
+      argumentQuality: clampScore(rawScores.argumentQuality, { fallback: 65 }),
+      logicalReasoning: clampScore(rawScores.logicalReasoning, { fallback: 65 }),
+      evidence: clampScore(rawScores.evidence, { fallback: 60 }),
+      rebuttalQuality: clampScore(rawScores.rebuttalQuality, { fallback: 65 }),
+      consistency: clampScore(rawScores.consistency, { fallback: 70 }),
+      persuasiveness: clampScore(rawScores.persuasiveness, { fallback: 65 }),
     },
     winner,
-    explanation: String(data.explanation || '').trim(),
+    explanation: String(data.explanation || 'Both sides presented arguments.').trim(),
+    strengths,
+    weaknesses,
     strongestArgument: String(data.strongestArgument || '').trim(),
     weakestArgument: String(data.weakestArgument || '').trim(),
+    aiStrongestCounter: String(data.aiStrongestCounter || '').trim(),
+    logicalFallacies,
     improvementTips: tips,
   };
 }
@@ -505,21 +560,20 @@ function offlineAllowed() {
   return isOfflineFallbackEnabled();
 }
 
-/** Return true when we should transparently fall back to local replies. */
 function useOfflineFor(error) {
   if (!offlineAllowed()) return false;
-  // Local demo replies take over for any AI/provider failure. Payload
-  // validation (400s) runs before the online call, but keep the guard as
-  // defense in depth so a client error is never "answered" offline.
   return !(error instanceof ApiError && error.status === 400);
 }
 
-/** Start a debate: real AI opening, or the offline opening when unavailable. */
+/** Start a debate: real AI opening, or the offline opening when configured/fallback. */
 export async function startDebate(payload) {
   const clean = validateStartPayload(payload);
   if (!isAiConfigured()) {
     if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineOpening(clean) };
-    throw new ApiError(503, 'AI service is not configured.');
+    throw new ApiError(
+      503,
+      'AI service is not configured. OPENAI_API_KEY environment variable is required on the server.'
+    );
   }
   try {
     return { mode: 'online', reply: await generateOpening(clean) };
@@ -532,12 +586,15 @@ export async function startDebate(payload) {
   }
 }
 
-/** Send the latest argument; returns a structured counterargument (online or offline). */
+/** Send the latest argument; returns a structured counterargument. */
 export async function sendDebateMessage(payload) {
   const clean = validateMessagePayload(payload);
   if (!isAiConfigured()) {
     if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineCounterargument(clean) };
-    throw new ApiError(503, 'AI service is not configured.');
+    throw new ApiError(
+      503,
+      'AI service is not configured. OPENAI_API_KEY environment variable is required on the server.'
+    );
   }
   try {
     return { mode: 'online', reply: await generateCounterargument(clean) };
@@ -555,7 +612,10 @@ export async function analyzeDebateArgument(payload) {
   const clean = validateAnalyzePayload(payload);
   if (!isAiConfigured()) {
     if (offlineAllowed()) return { mode: 'offline', analysis: offline.offlineAnalysis(clean) };
-    throw new ApiError(503, 'AI service is not configured.');
+    throw new ApiError(
+      503,
+      'AI service is not configured. OPENAI_API_KEY environment variable is required on the server.'
+    );
   }
   try {
     return { mode: 'online', analysis: await analyzeArgument(clean) };
@@ -568,12 +628,15 @@ export async function analyzeDebateArgument(payload) {
   }
 }
 
-/** Final / provisional evaluation of the whole debate. */
+/** Final / provisional evaluation of the debate. */
 export async function evaluateDebateTurn(payload) {
   const clean = validateEvaluatePayload(payload);
   if (!isAiConfigured()) {
     if (offlineAllowed()) return { mode: 'offline', evaluation: offline.offlineEvaluation(clean) };
-    throw new ApiError(503, 'AI service is not configured.');
+    throw new ApiError(
+      503,
+      'AI service is not configured. OPENAI_API_KEY environment variable is required on the server.'
+    );
   }
   try {
     return { mode: 'online', evaluation: await evaluateDebate(clean) };
