@@ -7,7 +7,7 @@ Debate AI is a web application where you enter a debate topic, choose a side, an
 ## Tech Stack
 
 - **Frontend:** React + Vite + Tailwind CSS
-- **Backend:** Node.js + Express
+- **Backend:** Node.js + Express (deployable as a Vercel serverless function)
 - **AI:** OpenAI API (kept on the backend only)
 - **Storage:** Browser localStorage (debate history)
 
@@ -15,8 +15,11 @@ Debate AI is a web application where you enter a debate topic, choose a side, an
 
 ```
 debate-ai/
+├── api/
+│   └── index.js          # Vercel serverless function entry (imports the Express app)
 ├── backend/
-│   ├── server.js
+│   ├── app.js            # Express app (shared by local dev + Vercel)
+│   ├── server.js         # Local dev server (loads .env, app.listen)
 │   ├── routes/debate.js
 │   ├── services/aiService.js
 │   └── .env.example
@@ -26,12 +29,62 @@ debate-ai/
 │   │   ├── pages/
 │   │   └── services/
 │   ├── index.html
-│   └── vite.config.js
-├── package.json
+│   └── vite.config.js    # Dev proxy: /api → localhost:3001
+├── vercel.json           # Vercel build + routing configuration
+├── package.json          # npm workspaces (frontend + backend)
 └── README.md
 ```
 
-## 1. Install Dependencies
+## Deploy to Vercel
+
+The project is **Vercel-ready** — `vercel.json` already configures the build,
+the static frontend output, and the `/api/*` routing to the serverless
+function. No extra setup is needed beyond adding your API key.
+
+1. **Push this repository to GitHub.**
+
+2. **Import it on Vercel:** go to [vercel.com/new](https://vercel.com/new) and
+   import the repository.
+
+3. **Keep the Root Directory as the repository root** (leave it empty /
+   default). Do **not** set it to `frontend/` — the whole monorepo is needed
+   because the API function lives in `api/`.
+
+4. **Framework Preset:** *Other* — `vercel.json` already sets the build
+   command (`npm run build`) and output directory (`frontend/dist`).
+
+5. **Add the environment variable** (required):
+
+   | Name | Value |
+   | --- | --- |
+   | `OPENAI_API_KEY` | your OpenAI API key (e.g. `sk-...`) |
+
+   Optional variables:
+
+   | Name | Value |
+   | --- | --- |
+   | `OPENAI_MODEL` | model to use (default: `gpt-4o-mini`) |
+   | `OPENAI_BASE_URL` | only if you use an OpenAI-compatible proxy |
+
+   Add them to **Production** (and **Preview** if you want preview
+   deployments to work too).
+
+6. **Deploy.** Then verify the API is live:
+   `https://<your-deployment>.vercel.app/api/health` should return
+   `{"status":"ok"}`.
+
+Notes:
+
+- Vercel serverless functions are limited to 60 seconds on the Hobby plan
+  (300s on Pro). The app's AI calls normally take 3–15 seconds, and the
+  OpenAI client is configured with a 30s timeout, so the limit is not an
+  issue in practice.
+- The OpenAI API key is only ever read on the server (the serverless
+  function) — it is never exposed to the browser.
+
+## Local Development
+
+### 1. Install Dependencies
 
 From the project root:
 
@@ -41,7 +94,7 @@ npm install
 
 This installs the frontend, backend, and root tooling (npm workspaces).
 
-## 2. Configure the API Key
+### 2. Configure the API Key
 
 The API key is used **only** by the backend. Never put it in frontend code.
 
@@ -66,7 +119,7 @@ PORT=3001                    # backend port
 
 `.env` is already in `.gitignore`, so your key will never be committed.
 
-## 3. Start the Backend
+### 3. Start the Backend
 
 From the project root:
 
@@ -76,7 +129,7 @@ npm run dev:backend
 
 The API runs at `http://localhost:3001`. Health check: `GET http://localhost:3001/api/health`.
 
-## 4. Start the Frontend
+### 4. Start the Frontend
 
 In a second terminal, from the project root:
 
@@ -92,7 +145,7 @@ Open `http://localhost:5173`. Vite proxies `/api` requests to the backend, so no
 npm run dev
 ```
 
-## 5. How to Use the Application
+### 5. How to Use the Application
 
 1. **Home** — click **Start a Debate**.
 2. **Setup** — enter a topic (or click the example), choose **FOR** or **AGAINST**, pick a difficulty, and click **Start Debate**.
@@ -109,13 +162,14 @@ Controls on the debate screen: **Send**, **Debate Score** (provisional evaluatio
 The repository includes an end-to-end smoke test of the whole UI flow (with the network mocked):
 
 ```bash
-npm run test --workspace frontend
+npm test
 ```
 
 ## API Endpoints
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET /api/health` | Health check |
 | `POST /api/debate/start` | Start a debate; returns the AI opening statement |
 | `POST /api/debate/message` | Send the latest argument; returns the counterargument, reasoning, and challenge |
 | `POST /api/debate/analyze` | Analyze the user's latest argument |
