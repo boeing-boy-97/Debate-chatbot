@@ -25,7 +25,9 @@ function getClient() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
-    timeout: 60000,
+    // Keep the timeout below the 60s Vercel serverless function limit so a
+    // slow request still returns a friendly error instead of a platform 504.
+    timeout: 30000,
     maxRetries: 1,
   });
 }
