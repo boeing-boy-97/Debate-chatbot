@@ -4,10 +4,19 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/index.js": {
+    "api/health.js": {
       "maxDuration": 60
     },
-    "api/[[...path]].js": {
+    "api/debate/start.js": {
+      "maxDuration": 60
+    },
+    "api/debate/message.js": {
+      "maxDuration": 60
+    },
+    "api/debate/analyze.js": {
+      "maxDuration": 60
+    },
+    "api/debate/evaluate.js": {
       "maxDuration": 60
     }
   },

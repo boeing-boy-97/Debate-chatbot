@@ -40,8 +40,10 @@ debate-ai/
 
 The backend lives **inside `frontend/`** on purpose: Vercel only deploys
 files under the project's Root Directory, and serverless functions must sit
-under it too. Keeping the Express app + `api/` entries in `frontend/` means
-the whole product ships from that one folder.
+under it too. Keeping the shared backend logic + one `api/` file per route in
+`frontend/` means the whole product ships from that one folder with plain
+static file routing (no catch-all routes, so every `/api/*` path always
+resolves to exactly one function).
 
 ## Deploy to Vercel
 
