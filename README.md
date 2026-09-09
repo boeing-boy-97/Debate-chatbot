@@ -65,6 +65,7 @@ function. No extra setup is needed beyond adding your API key.
    | --- | --- |
    | `OPENAI_MODEL` | model to use (default: `gpt-4o-mini`) |
    | `OPENAI_BASE_URL` | only if you use an OpenAI-compatible proxy |
+   | `ALLOW_OFFLINE_FALLBACK` | default `true`; when the AI service is unreachable or no key is set, the app falls back to a local demo engine so it still works end-to-end. Set to `false` to enforce OpenAI-only. |
 
    Add them to **Production** (and **Preview** if you want preview
    deployments to work too).
@@ -81,6 +82,26 @@ Notes:
   issue in practice.
 - The OpenAI API key is only ever read on the server (the serverless
   function) — it is never exposed to the browser.
+
+## How the AI replies work
+
+The backend first tries to use **real OpenAI**. If that succeeds, the debate is
+driven by the model.
+
+When OpenAI is **not configured** (no key) or **can't be reached** (no network
+to `api.openai.com`, an outage, or a rate/invalid-key error), the app falls back
+to a small **local demo engine** (`backend/services/offlineEngine.js`) so the
+full product still works end-to-end and can be demonstrated anywhere. Replies
+produced this way are clearly labelled **"Offline replies"** in the UI.
+
+Every response (real or fallback) includes a `mode` field — `"online"` or
+`"offline"` — so the client knows which path was used.
+
+To run strictly on OpenAI and never fall back, set `ALLOW_OFFLINE_FALLBACK=false`.
+
+> The offline engine is a deterministic, heuristic debater — it is not real AI.
+> For genuine, high-quality debates, run with an `OPENAI_API_KEY` on a machine
+> or deployment that has internet access to `api.openai.com`.
 
 ## Local Development
 

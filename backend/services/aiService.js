@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import * as offline from './offlineEngine.js';
 
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const VALID_POSITIONS = ['for', 'against'];
@@ -153,22 +154,40 @@ async function complete(messages, { json = false } = {}) {
     request.response_format = { type: 'json_object' };
   }
   try {
-    const completion = await client.chat.completions.create(request);
+    let completion;
+    try {
+      completion = await client.chat.completions.create(request);
+    } catch (error) {
+      // Some OpenAI-compatible providers do not support response_format; retry
+      // once without it, keeping the strict JSON instruction in the prompt.
+      if (json && error?.status === 400) {
+        completion = await client.chat.completions.create({
+          ...request,
+          response_format: undefined,
+        });
+      } else {
+        throw error;
+      }
+    }
     return completion.choices[0].message.content || '';
   } catch (error) {
-    // Some OpenAI-compatible providers do not support response_format;
-    // retry once without it, keeping the strict JSON instruction in the prompt.
-    if (json && error?.status === 400) {
-      const retry = await client.chat.completions.create({ ...request, response_format: undefined });
-      return retry.choices[0].message.content || '';
-    }
+    // Invalid / missing key.
     if (error?.status === 401 || error?.status === 403) {
       throw new ApiError(503, 'AI service is not configured.');
     }
+    // Out of quota or hitting provider rate limits.
     if (error?.status === 429) {
       throw new ApiError(
         429,
         'You have reached the AI rate limit. Please wait a moment and then try again.'
+      );
+    }
+    // No HTTP status means a transport/connectivity problem (DNS, TLS, reset,
+    // timeout), not a real answer from the model.
+    if (!error?.status) {
+      throw new ApiError(
+        502,
+        'Could not reach the AI service. Please check your connection and try again.'
       );
     }
     throw error;
@@ -391,4 +410,91 @@ Return ONLY valid JSON with exactly these keys:
     weakestArgument: String(data.weakestArgument || '').trim(),
     improvementTips: tips,
   };
+}
+
+/* --------------------- online / offline orchestration --------------------- */
+
+/**
+ * Offline (local demo) replies are used only when the real AI is not
+ * configured or cannot be reached, so the app still works end-to-end without
+ * network access. Set ALLOW_OFFLINE_FALLBACK=false to enforce OpenAI-only.
+ */
+function offlineAllowed() {
+  return (process.env.ALLOW_OFFLINE_FALLBACK || '').trim().toLowerCase() !== 'false';
+}
+
+/** Return true when we should transparently fall back to local replies. */
+function useOfflineFor(error) {
+  if (!offlineAllowed()) return false;
+  // Local demo replies take over for any failure except validation problems
+  // (400s raised before a model call) — those should still be surfaced.
+  return !(error instanceof ApiError && error.status === 400);
+}
+
+/** Start a debate: real AI opening, or the offline opening when unavailable. */
+export async function startDebate(payload) {
+  if (!isAiConfigured()) {
+    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineOpening(payload) };
+    throw new ApiError(503, 'AI service is not configured.');
+  }
+  try {
+    return { mode: 'online', reply: await generateOpening(payload) };
+  } catch (error) {
+    if (useOfflineFor(error)) {
+      console.warn('[ai] using offline opening:', error?.message || error);
+      return { mode: 'offline', reply: offline.offlineOpening(payload) };
+    }
+    throw error;
+  }
+}
+
+/** Send the latest argument; returns a structured counterargument (online or offline). */
+export async function sendDebateMessage(payload) {
+  if (!isAiConfigured()) {
+    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineCounterargument(payload) };
+    throw new ApiError(503, 'AI service is not configured.');
+  }
+  try {
+    return { mode: 'online', reply: await generateCounterargument(payload) };
+  } catch (error) {
+    if (useOfflineFor(error)) {
+      console.warn('[ai] using offline counterargument:', error?.message || error);
+      return { mode: 'offline', reply: offline.offlineCounterargument(payload) };
+    }
+    throw error;
+  }
+}
+
+/** Analyze the user's latest argument. */
+export async function analyzeDebateArgument(payload) {
+  if (!isAiConfigured()) {
+    if (offlineAllowed()) return { mode: 'offline', analysis: offline.offlineAnalysis(payload) };
+    throw new ApiError(503, 'AI service is not configured.');
+  }
+  try {
+    return { mode: 'online', analysis: await analyzeArgument(payload) };
+  } catch (error) {
+    if (useOfflineFor(error)) {
+      console.warn('[ai] using offline analysis:', error?.message || error);
+      return { mode: 'offline', analysis: offline.offlineAnalysis(payload) };
+    }
+    throw error;
+  }
+}
+
+/** Final / provisional evaluation of the whole debate. */
+export async function evaluateDebateTurn(payload) {
+  if (!isAiConfigured()) {
+    if (offlineAllowed()) return { mode: 'offline', evaluation: offline.offlineEvaluation(payload) };
+    throw new ApiError(503, 'AI service is not configured.');
+  }
+  try {
+    return { mode: 'online', evaluation: await evaluateDebate(payload) };
+  } catch (error) {
+    if (useOfflineFor(error)) {
+      console.warn('[ai] using offline evaluation:', error?.message || error);
+      return { mode: 'offline', evaluation: offline.offlineEvaluation(payload) };
+    }
+    throw error;
+  }
 }
