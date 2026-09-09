@@ -87,8 +87,8 @@ extra setup is needed beyond adding your API key.
    deployments to work too).
 
 6. **Deploy.** Then verify the API is live:
-   `https://<your-deployment>.vercel.app/api/health` should return
-   `{"status":"ok"}`.
+   `https://<your-deployment>.vercel.app/api/health` should return JSON like
+   `{"status":"ok","configured":true,"model":"gpt-4o-mini","offlineFallback":"on"}`.
 
 Notes:
 
@@ -99,6 +99,46 @@ Notes:
   instead of a platform 504.
 - The OpenAI API key is only ever read on the server (the serverless
   function) — it is never exposed to the browser.
+
+## Troubleshooting (Vercel)
+
+**"I added the API key on Vercel but the AI still doesn't work"** — work through
+this checklist in order:
+
+1. **Redeploy after adding the key.** Environment variables only take effect on
+   a *new* deployment: Vercel Dashboard → Deployments → ⋯ → **Redeploy**.
+   Reloading the page is not enough.
+2. **Check the variable name and environment.** The name must be exactly
+   `OPENAI_API_KEY` (no quotes around the value), and it must be enabled for
+   **Production** (enable **Preview** too if you test preview URLs).
+3. **Check `/api/health`.** Open
+   `https://<your-deployment>.vercel.app/api/health` in the browser:
+   - Valid JSON with `"configured":true` → the key reached the runtime; live AI
+     should work. If debates still fail, check the function logs (step 5).
+   - Valid JSON with `"configured":false` → the key did *not* reach the
+     runtime; recheck steps 1–2.
+   - An HTML page or a 404 instead of JSON → the API routes are not deployed at
+     all. The project's **Root Directory must be `frontend`** (Vercel Dashboard
+     → Settings → General → Root Directory), then redeploy. The home page also
+     shows an **API unreachable** badge in this case.
+4. **Read the on-screen error.** The debate page distinguishes the cases:
+   - *“AI service is not set up”* → no key at runtime (steps 1–2), or
+     `ALLOW_OFFLINE_FALLBACK=false` is set while the key is missing/invalid.
+   - *“Can't reach the debate API”* → the backend itself didn't answer (step 3,
+     HTML-instead-of-JSON case, or no internet connection).
+   - *“Offline replies”* banner → the app is working, but OpenAI is unreachable
+     (invalid key, no quota, or an outage), so it answered locally. Check the
+     key and its billing/quota in the OpenAI dashboard.
+5. **Check the function logs.** Vercel Dashboard → Deployments → your deployment
+   → Functions → click a failing `/api/debate/*` invocation. Lines tagged
+   `[ai]` / `[api error]` show the technical reason (details stay in the logs
+   and are never sent to the browser).
+
+Note: with the default `ALLOW_OFFLINE_FALLBACK=true`, a missing or invalid key
+alone can never break the app completely — opening statements, replies,
+analysis, and scoring all still work via local demo replies (labelled
+**Offline replies**). If *everything* fails at once, the cause is almost always
+step 1 (forgot to redeploy) or step 3 (API routes not deployed).
 
 ## How the AI replies work
 

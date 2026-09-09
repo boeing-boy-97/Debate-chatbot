@@ -1,7 +1,7 @@
 // Local development server: loads frontend/server/.env, then serves the Express app.
 //
-// On Vercel this file is not used — frontend/api/index.js is the serverless
-// entry point there.
+// On Vercel this file is not used — the per-route serverless functions in
+// frontend/api/ (which share frontend/server/lambda.js) serve the API there.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';

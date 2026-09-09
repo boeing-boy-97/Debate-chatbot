@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import debateRoutes from './routes/debate.js';
+import { getPublicStatus } from './services/publicStatus.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,7 +35,7 @@ if (process.env.VERCEL) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json(getPublicStatus());
 });
 
 app.use('/api/debate', debateRoutes);
