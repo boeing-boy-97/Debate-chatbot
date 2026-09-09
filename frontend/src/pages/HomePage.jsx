@@ -104,7 +104,11 @@ export default function HomePage({ history, onStart, onOpenDebate, onDelete, onC
             {history.map((item) => (
               <li key={item.id}>
                 <div className="group flex items-center gap-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 transition hover:shadow-md">
-                  <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onOpenDebate(item)}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenDebate(item)}
+                    className="min-w-0 flex-1 cursor-pointer rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  >
                     <p className="truncate font-semibold text-slate-900">{item.topic}</p>
                     <p className="mt-1 text-sm text-slate-500">
                       <span className="font-medium uppercase text-blue-600">
@@ -125,7 +129,7 @@ export default function HomePage({ history, onStart, onOpenDebate, onDelete, onC
                         </>
                       )}
                     </p>
-                  </div>
+                  </button>
                   <button
                     type="button"
                     onClick={() => onOpenDebate(item)}

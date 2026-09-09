@@ -59,9 +59,17 @@ if (fs.existsSync(distDir)) {
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[server error]', err?.message || err);
-  res.status(500).json({
-    error: 'Something went wrong while contacting the AI. Please try again.',
-  });
+  // Body-parser errors (invalid JSON, oversized body) carry a safe 4xx
+  // status — surface it instead of returning a misleading 500.
+  const status =
+    Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  const error =
+    status === 413
+      ? 'Request body is too large.'
+      : status === 400
+        ? 'Invalid request body. Please send valid JSON.'
+        : 'Something went wrong while contacting the AI. Please try again.';
+  res.status(status).json({ error });
 });
 
 export default app;

@@ -15,7 +15,7 @@ export default function MessageBubble({ message, onAnalyze, analyzing }) {
           <div className="mb-1 text-right text-xs font-semibold uppercase tracking-wide text-blue-600">
             You
           </div>
-          <div className="whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-3 text-sm leading-relaxed text-white shadow-sm">
+          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-3 text-sm leading-relaxed text-white shadow-sm">
             {message.text}
           </div>
         </div>
@@ -42,7 +42,7 @@ export default function MessageBubble({ message, onAnalyze, analyzing }) {
                   <p className="mb-0.5 text-xs font-bold uppercase tracking-wide text-blue-600">
                     Counterargument
                   </p>
-                  <p className="whitespace-pre-wrap">{message.sections.counterargument}</p>
+                  <p className="whitespace-pre-wrap break-words">{message.sections.counterargument}</p>
                 </div>
               )}
               {message.sections.why && (
@@ -50,7 +50,7 @@ export default function MessageBubble({ message, onAnalyze, analyzing }) {
                   <p className="mb-0.5 text-xs font-bold uppercase tracking-wide text-slate-500">
                     Why
                   </p>
-                  <p className="whitespace-pre-wrap">{message.sections.why}</p>
+                  <p className="whitespace-pre-wrap break-words">{message.sections.why}</p>
                 </div>
               )}
               {message.sections.challenge && (
@@ -58,12 +58,12 @@ export default function MessageBubble({ message, onAnalyze, analyzing }) {
                   <p className="mb-0.5 text-xs font-bold uppercase tracking-wide text-slate-500">
                     Challenge
                   </p>
-                  <p className="whitespace-pre-wrap italic">{message.sections.challenge}</p>
+                  <p className="whitespace-pre-wrap break-words italic">{message.sections.challenge}</p>
                 </div>
               )}
             </div>
           ) : (
-            <p className="whitespace-pre-wrap">{message.text}</p>
+            <p className="whitespace-pre-wrap break-words">{message.text}</p>
           )}
         </div>
 

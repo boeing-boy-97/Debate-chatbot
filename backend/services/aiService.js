@@ -26,9 +26,10 @@ function getClient() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
-    // Keep the timeout below the 60s Vercel serverless function limit so a
-    // slow request still returns a friendly error instead of a platform 504.
-    timeout: 30000,
+    // Keep the total worst-case time (timeout + 1 retry + backoff, ~45s) below
+    // the 60s Vercel serverless function limit, so a slow request still returns
+    // a friendly error (or offline fallback) instead of a platform 504.
+    timeout: 20000,
     maxRetries: 1,
   });
 }
@@ -73,6 +74,55 @@ function normalizeConversation(value) {
     )
     .slice(-40)
     .map((m) => ({ role: m.role, content: m.content.trim().slice(0, 3000) }));
+}
+
+/**
+ * Payload validation shared by the online AND offline paths.
+ * This must run before choosing a path, so invalid input is always rejected
+ * with a 400 — never silently "answered" by the offline demo engine.
+ */
+function validateStartPayload(payload) {
+  return {
+    topic: requireString(payload?.topic, 'Topic', { max: 300 }),
+    userPosition: normalizePosition(payload?.userPosition),
+    difficulty: normalizeDifficulty(payload?.difficulty),
+  };
+}
+
+function validateMessagePayload(payload) {
+  const clean = {
+    ...validateStartPayload(payload),
+    aiPosition: normalizePosition(payload?.aiPosition),
+  };
+  const history = normalizeConversation(payload?.conversation);
+  if (!history.length || history[history.length - 1].role !== 'user') {
+    throw new ApiError(400, 'Send your argument first.');
+  }
+  return { ...clean, conversation: history };
+}
+
+function validateAnalyzePayload(payload) {
+  return {
+    ...validateStartPayload(payload),
+    argument: requireString(payload?.argument, 'Argument', { max: 3000 }),
+    lastAiResponse:
+      typeof payload?.lastAiResponse === 'string' ? payload.lastAiResponse.slice(0, 2000) : '',
+  };
+}
+
+function validateEvaluatePayload(payload) {
+  const clean = {
+    ...validateStartPayload(payload),
+    aiPosition: normalizePosition(payload?.aiPosition),
+  };
+  const history = normalizeConversation(payload?.conversation);
+  if (!history.some((m) => m.role === 'user')) {
+    throw new ApiError(
+      400,
+      'There is not enough debate to evaluate yet. Send at least one argument first.'
+    );
+  }
+  return { ...clean, conversation: history };
 }
 
 /* --------------------------- prompt building --------------------------- */
@@ -426,23 +476,25 @@ function offlineAllowed() {
 /** Return true when we should transparently fall back to local replies. */
 function useOfflineFor(error) {
   if (!offlineAllowed()) return false;
-  // Local demo replies take over for any failure except validation problems
-  // (400s raised before a model call) — those should still be surfaced.
+  // Local demo replies take over for any AI/provider failure. Payload
+  // validation (400s) runs before the online call, but keep the guard as
+  // defense in depth so a client error is never "answered" offline.
   return !(error instanceof ApiError && error.status === 400);
 }
 
 /** Start a debate: real AI opening, or the offline opening when unavailable. */
 export async function startDebate(payload) {
+  const clean = validateStartPayload(payload);
   if (!isAiConfigured()) {
-    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineOpening(payload) };
+    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineOpening(clean) };
     throw new ApiError(503, 'AI service is not configured.');
   }
   try {
-    return { mode: 'online', reply: await generateOpening(payload) };
+    return { mode: 'online', reply: await generateOpening(clean) };
   } catch (error) {
     if (useOfflineFor(error)) {
       console.warn('[ai] using offline opening:', error?.message || error);
-      return { mode: 'offline', reply: offline.offlineOpening(payload) };
+      return { mode: 'offline', reply: offline.offlineOpening(clean) };
     }
     throw error;
   }
@@ -450,16 +502,17 @@ export async function startDebate(payload) {
 
 /** Send the latest argument; returns a structured counterargument (online or offline). */
 export async function sendDebateMessage(payload) {
+  const clean = validateMessagePayload(payload);
   if (!isAiConfigured()) {
-    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineCounterargument(payload) };
+    if (offlineAllowed()) return { mode: 'offline', reply: offline.offlineCounterargument(clean) };
     throw new ApiError(503, 'AI service is not configured.');
   }
   try {
-    return { mode: 'online', reply: await generateCounterargument(payload) };
+    return { mode: 'online', reply: await generateCounterargument(clean) };
   } catch (error) {
     if (useOfflineFor(error)) {
       console.warn('[ai] using offline counterargument:', error?.message || error);
-      return { mode: 'offline', reply: offline.offlineCounterargument(payload) };
+      return { mode: 'offline', reply: offline.offlineCounterargument(clean) };
     }
     throw error;
   }
@@ -467,16 +520,17 @@ export async function sendDebateMessage(payload) {
 
 /** Analyze the user's latest argument. */
 export async function analyzeDebateArgument(payload) {
+  const clean = validateAnalyzePayload(payload);
   if (!isAiConfigured()) {
-    if (offlineAllowed()) return { mode: 'offline', analysis: offline.offlineAnalysis(payload) };
+    if (offlineAllowed()) return { mode: 'offline', analysis: offline.offlineAnalysis(clean) };
     throw new ApiError(503, 'AI service is not configured.');
   }
   try {
-    return { mode: 'online', analysis: await analyzeArgument(payload) };
+    return { mode: 'online', analysis: await analyzeArgument(clean) };
   } catch (error) {
     if (useOfflineFor(error)) {
       console.warn('[ai] using offline analysis:', error?.message || error);
-      return { mode: 'offline', analysis: offline.offlineAnalysis(payload) };
+      return { mode: 'offline', analysis: offline.offlineAnalysis(clean) };
     }
     throw error;
   }
@@ -484,16 +538,17 @@ export async function analyzeDebateArgument(payload) {
 
 /** Final / provisional evaluation of the whole debate. */
 export async function evaluateDebateTurn(payload) {
+  const clean = validateEvaluatePayload(payload);
   if (!isAiConfigured()) {
-    if (offlineAllowed()) return { mode: 'offline', evaluation: offline.offlineEvaluation(payload) };
+    if (offlineAllowed()) return { mode: 'offline', evaluation: offline.offlineEvaluation(clean) };
     throw new ApiError(503, 'AI service is not configured.');
   }
   try {
-    return { mode: 'online', evaluation: await evaluateDebate(payload) };
+    return { mode: 'online', evaluation: await evaluateDebate(clean) };
   } catch (error) {
     if (useOfflineFor(error)) {
       console.warn('[ai] using offline evaluation:', error?.message || error);
-      return { mode: 'offline', evaluation: offline.offlineEvaluation(payload) };
+      return { mode: 'offline', evaluation: offline.offlineEvaluation(clean) };
     }
     throw error;
   }
