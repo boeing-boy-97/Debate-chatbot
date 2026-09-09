@@ -8,11 +8,11 @@ import debateRoutes from './routes/debate.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * The Express application.
+ * The Express application for LOCAL development (frontend/server/server.js).
  *
- * It is shared by two entry points:
- *  - frontend/server/server.js — local development (loads frontend/server/.env, calls app.listen)
- *  - frontend/api/index.js — Vercel serverless function (Vercel manages the server)
+ * On Vercel the API is served by the standalone serverless functions in
+ * frontend/api/ (one file per route, sharing frontend/server/lambda.js) —
+ * this Express app is not used there.
  */
 const app = express();
 
